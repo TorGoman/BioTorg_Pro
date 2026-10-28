@@ -1,0 +1,12 @@
+{
+  "version": "2.2.1",
+  "release_date": "2026-10-28",
+  "repo_owner": "TorGoman",
+  "repo_name": "BioTorg_Pro",
+  "installer_url": "https://github.com/TorGoman/BioTorg_Pro/raw/main/BioTorg_Pro_Setup_v2.2.1.exe",
+  "changelog": [
+    "إضافة الأيقونة الرسمية الفاخرة للبرنامج (درع البصمة الحيوية الذهبي) على سطح المكتب وشريط المهام.",
+    "تحديث شورت كت سطح المكتب وقائمة Start بالأيقونة الاحترافية عالية الدقة لجميع الشاشات.",
+    "تحسين استقرار محرك التحديث التلقائي الفوري وتوافق واجهة المستخدم."
+  ]
+}
