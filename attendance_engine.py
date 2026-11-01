@@ -8,7 +8,7 @@ import os
 import sys
 import json
 import datetime
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 import pandas as pd
 
 def get_app_dir() -> str:
@@ -23,18 +23,24 @@ DEFAULT_ADJUSTMENTS_FILE = "attendance_adjustments.json"
 DEFAULT_CONFIG = {
     "shift_start": "11:00",       # موعد بدء العمل الافتراضي (11:00 صباحاً)
     "shift_end": "19:00",         # موعد نهاية العمل الافتراضي (07:00 مساءً)
-    "grace_period_mins": 15,     # فترة السماح بالتأخير (بالدقائق)
+    "grace_period_mins": 30,     # فترة السماح بالتأخير (30 دقيقة / نصف ساعة كاملة)
     "early_departure_grace": 10, # فترة السماح بالانصراف المبكر (بالدقائق)
     "late_calc_mode": "after_grace", # "after_grace": احتساب التأخير فقط لما بعد فترة السماح | "from_start": احتساب التأخير كاملاً من بداية الوردية
     "weekend_days": [4, 5],       # 4 = الجمعة، 5 = السبت (العطلة العامة الافتراضية)
     "employee_weekends": {},      # إجازات مخصصة لكل موظف (مثل فريق المبيعات): {"1": [1], "2": [2]}
-    "monthly_permission_hours": 4.0, # عدد ساعات الإذن المسموح بها شهرياً (إذا تجاوزها يخصم يوم)
+    "employee_shifts": {},        # مواعيد عمل مخصصة لكل موظف: {"1": {"shift_start": "09:00", "shift_end": "17:00"}}
+    "monthly_permission_hours": 4.0, # عدد ساعات الإذن المسموح بها شهرياً (4 ساعات ترحيل وتجميع)
+    "severe_late_threshold_mins": 90, # حد التأخير الكبير (ساعة ونصف = 90 دقيقة) ليتم خصم يوم كامل
+    "severe_late_penalty_days": 1.0, # عدد أيام الخصم عند التأخير لأكثر من ساعة ونصف (يوم كامل)
+    "monthly_exempt_leave_days": 1.0, # عدد أيام الإجازة الشهرية غير المخصومة (1 يوم شهرياً)
+    "annual_leave_days": 21.0,   # إجمالي رصيد الإجازات السنوية (21 يوماً موزعة على أشهر السنة)
     "auto_detect_hire_date": True, # عدم احتساب الموظف غائباً قبل تاريخ أول بصمة له
     "hr_settings": {
         "enabled": False,                       # إمكانية تفعيل أو إلغاء تفعيل موديول الرواتب
-        "month_days_basis": 30,                 # أساس احتساب أجر اليوم (30 يوماً أو أيام العمل الفعلية)
+        "absence_deduction_enabled": True,       # تفعيل أو إلغاء احتساب خصم أيام الغياب
+        "month_days_basis": 30.0,               # أساس احتساب أجر اليوم (المرتب ÷ 30 يوماً)
         "shift_hours": 7.0,                     # عدد ساعات العمل اليومية لاحتساب أجر الساعة
-        "absence_penalty_multiplier": 1.0,      # معامل خصم يوم الغياب (1 = خصم يوم، 1.5 = يوم ونصف، 2 = يومين)
+        "absence_penalty_multiplier": 1.0,      # عدد أيام الخصم لكل يوم غياب (1 = يوم، 1.5 = يوم ونصف، 2 = يومين)
         "late_deduction_type": "minutes",       # "minutes" (بالدقائق) أو "tiers" (شرائح تأخير)
         "late_minute_multiplier": 1.0,          # معامل خصم دقيقة التأخير
         "late_tiers": [                         # شرائح التأخير اليومية
@@ -45,7 +51,8 @@ DEFAULT_CONFIG = {
         ],
         "early_leave_deduction": True,          # احتساب خصم الانصراف المبكر
         "overtime_multiplier": 1.5,             # معامل احتساب الساعات الإضافية
-        "employees_hr": {}                      # كود الموظف -> {basic_salary, allowances, bonuses, deductions, job_title}
+        "employees_hr": {},                     # كود الموظف -> {basic_salary, allowances, bonuses, deductions, job_title}
+        "payroll_overrides": {}                 # كود الموظف والفترة -> التعديلات اليدوية المباشرة على الأرقام
     }
 }
 
@@ -177,7 +184,7 @@ class AttendanceEngine:
         # التراجع إلى العطلة العامة الافتراضية
         return self.config.get("weekend_days", [4, 5])
 
-    def set_employee_weekend_days(self, enno: int, days: List[int]) -> bool:
+    def set_employee_weekend_days(self, enno: int, days: Optional[List[int]]) -> bool:
         """
         تعيين أيام الإجازة الأسبوعية الخاصة بموظف وحفظها في الإعدادات.
         إذا تم تمرير قائمة فارغة أو None، يتم إزالة التخصيص ليعود للعطلة العامة.
@@ -192,7 +199,61 @@ class AttendanceEngine:
         else:
             self.config["employee_weekends"][enno_str] = [int(d) for d in days]
         
-        return self.save_config({})
+        return self.save_config(self.config)
+
+    def get_employee_shift(self, enno: int) -> Tuple[datetime.time, datetime.time, str, str]:
+        """
+        جلب مواعيد الوردية (بدء العمل والانصراف) المخصصة للموظف.
+        إذا لم تكن له وردية مخصصة، يتم استخدام المواعيد العامة للمنشأة من الإعدادات.
+        تُرجع: (shift_start_obj, shift_end_obj, shift_start_str, shift_end_str)
+        """
+        emp_shifts = self.config.get("employee_shifts", {})
+        enno_str = str(enno)
+        emp_cfg = emp_shifts.get(enno_str) or emp_shifts.get(enno) or {}
+
+        def_start_str = self.config.get("shift_start", "11:00")
+        def_end_str = self.config.get("shift_end", "19:00")
+
+        shift_start_str = emp_cfg.get("shift_start") or def_start_str
+        shift_end_str = emp_cfg.get("shift_end") or def_end_str
+
+        shift_start = self.parse_time_str(shift_start_str)
+        shift_end = self.parse_time_str(shift_end_str)
+
+        return shift_start, shift_end, shift_start_str, shift_end_str
+
+    def set_employee_shift(self, enno: int, shift_start: Optional[str] = None, shift_end: Optional[str] = None) -> bool:
+        """
+        تعيين مواعيد بدء ونهاية العمل الخاصة بموظف محدد وحفظها في الإعدادات.
+        إذا تم تمرير None أو قيم فارغة، يتم إزالة التخصيص والرجوع للمواعيد العامة.
+        """
+        if "employee_shifts" not in self.config:
+            self.config["employee_shifts"] = {}
+
+        enno_str = str(enno)
+        if not shift_start and not shift_end:
+            if enno_str in self.config["employee_shifts"]:
+                del self.config["employee_shifts"][enno_str]
+        else:
+            def_start = self.config.get("shift_start", "11:00")
+            def_end = self.config.get("shift_end", "19:00")
+
+            s_start = shift_start.strip() if shift_start and shift_start.strip() else def_start
+            s_end = shift_end.strip() if shift_end and shift_end.strip() else def_end
+
+            # التأكد من صحة الصيغة وقابلية التحويل
+            try:
+                self.parse_time_str(s_start)
+                self.parse_time_str(s_end)
+            except Exception:
+                return False
+
+            self.config["employee_shifts"][enno_str] = {
+                "shift_start": s_start,
+                "shift_end": s_end
+            }
+
+        return self.save_config(self.config)
 
     def load_file(self, file_path: str) -> bool:
         """قراءة وتحليل ملف بصمة Advision / Realand (TXT)"""
@@ -308,21 +369,26 @@ class AttendanceEngine:
             day_logs = self.df_clean[self.df_clean['Date'] == target_date]
             day_logs_by_emp = day_logs.groupby('EnNo')
 
-        # قراءة إعدادات الوردية
-        shift_start = self.parse_time_str(self.config.get("shift_start", "11:00"))
-        shift_end = self.parse_time_str(self.config.get("shift_end", "19:00"))
-        grace_mins = self.config.get("grace_period_mins", 15)
-        early_grace_mins = self.config.get("early_departure_grace", 10)
+        # قراءة إعدادات الوردية الافتراضية
+        def_shift_start = self.parse_time_str(self.config.get("shift_start", "11:00"))
+        def_shift_end = self.parse_time_str(self.config.get("shift_end", "19:00"))
+        grace_mins = int(self.config.get("grace_period_mins", 30))
+        severe_late_threshold = int(self.config.get("severe_late_threshold_mins", 90))
+        early_grace_mins = int(self.config.get("early_departure_grace", 10))
         late_calc_mode = self.config.get("late_calc_mode", "after_grace")
         auto_hire = self.config.get("auto_detect_hire_date", True)
         default_shift_hours = float(self.config.get("hr_settings", {}).get("shift_hours", 7.0))
 
-        # تحويل وقت بدء الوردية إلى دقائق لحساب التأخير
-        shift_start_mins = shift_start.hour * 60 + shift_start.minute
-        shift_end_mins = shift_end.hour * 60 + shift_end.minute
-
         for enno, emp_info in sorted(self.employees.items()):
             name = emp_info["name"]
+
+            # جلب مواعيد الوردية المخصصة لهذا الموظف (أو الافتراضية العامة للمنشأة)
+            emp_shift_start, emp_shift_end, emp_shift_start_str, emp_shift_end_str = self.get_employee_shift(enno)
+            emp_shift_start_mins = emp_shift_start.hour * 60 + emp_shift_start.minute
+            emp_shift_end_mins = emp_shift_end.hour * 60 + emp_shift_end.minute
+            emp_shift_hours = round(max(0, emp_shift_end_mins - emp_shift_start_mins) / 60.0, 2)
+            if emp_shift_hours <= 0:
+                emp_shift_hours = default_shift_hours
 
             # هل اليوم عطلة أسبوعية خاصة بهذا الموظف؟
             emp_wk_days = self.get_employee_weekend_days(enno)
@@ -361,10 +427,9 @@ class AttendanceEngine:
                     hours_worked = 0.0
                     duration_str = "بصمة واحدة"
 
-                # حساب التأخير (بالدقائق):
-                # إذا تجاوز فترة السماح، يُحسب التأخير من بعد فترة السماح فقط (أو من البداية حسب الإعدادات)
+                # حساب التأخير (بالدقائق) بناءً على ميعاد حضور الموظف الخاص
                 actual_checkin_mins = checkin_time.hour * 60 + checkin_time.minute
-                diff_checkin = actual_checkin_mins - shift_start_mins
+                diff_checkin = actual_checkin_mins - emp_shift_start_mins
                 if diff_checkin > grace_mins:
                     if late_calc_mode == "after_grace":
                         late_minutes = diff_checkin - grace_mins
@@ -373,23 +438,35 @@ class AttendanceEngine:
                 else:
                     late_minutes = 0
 
-                # حساب الانصراف المبكر (بالدقائق)
+                # فحص التأخير الشديد لأكثر من ساعة ونصف (90 دقيقة) من موعد الموظف -> يخصم يوم كامل
+                is_severe_late = False
+                if diff_checkin > severe_late_threshold:
+                    is_severe_late = True
+
+                # حساب الانصراف المبكر (بالدقائق) بناءً على ميعاد انصراف الموظف الخاص
                 early_leave_minutes = 0
                 overtime_minutes = 0
                 if checkout_time is not None:
                     actual_checkout_mins = checkout_time.hour * 60 + checkout_time.minute
-                    diff_checkout = shift_end_mins - actual_checkout_mins
+                    diff_checkout = emp_shift_end_mins - actual_checkout_mins
                     if diff_checkout > early_grace_mins:
                         if late_calc_mode == "after_grace":
                             early_leave_minutes = diff_checkout - early_grace_mins
                         else:
                             early_leave_minutes = diff_checkout
-                    elif actual_checkout_mins > shift_end_mins:
-                        overtime_minutes = actual_checkout_mins - shift_end_mins
+                    elif actual_checkout_mins > emp_shift_end_mins:
+                        overtime_minutes = actual_checkout_mins - emp_shift_end_mins
 
                 # تحديد الحالة التلقائية
                 notes_list = []
-                if checkout_time is None:
+                if is_severe_late:
+                    calc_status = "متأخر > 1.5س (خصم يوم)"
+                    notes_list.append(f"تأخير {diff_checkin}د (تجاوز 1.5س - يخصم يوم كامل)")
+                    if early_leave_minutes > 0:
+                        notes_list.append(f"مغادرة مبكرة {early_leave_minutes}د")
+                    if checkout_time is None:
+                        notes_list.append("لم يسجل انصراف")
+                elif checkout_time is None:
                     calc_status = "حاضر (بدون انصراف)"
                     notes_list.append("لم يسجل انصراف")
                 elif late_minutes > 0 and early_leave_minutes > 0:
@@ -446,6 +523,8 @@ class AttendanceEngine:
                     "date": target_date,
                     "is_present": is_present,
                     "status": status,
+                    "shift_start": emp_shift_start_str,
+                    "shift_end": emp_shift_end_str,
                     "checkin_time": checkin_str,
                     "checkout_time": checkout_str,
                     "late_minutes": late_minutes,
@@ -456,14 +535,15 @@ class AttendanceEngine:
                     "punches_count": len(emp_punches),
                     "notes": notes_str,
                     "condition": condition,
-                    "status_override": status_override
+                    "status_override": status_override,
+                    "is_severe_late": is_severe_late
                 })
 
             else:
                 # الموظف لم يسجل بصمة في هذا اليوم
                 if status_override == "PRESENT":
                     is_present = True
-                    shift_h = default_shift_hours
+                    shift_h = emp_shift_hours
                     status = f"حاضر ({condition})" if condition else "حاضر (تصريح/معاينة)"
                     notes_str = f"حضور معتمد: {condition}" if condition else "حضور معتمد بتصريح"
                     checkin_str = "--:--:--"
@@ -506,6 +586,8 @@ class AttendanceEngine:
                     "date": target_date,
                     "is_present": is_present,
                     "status": status,
+                    "shift_start": emp_shift_start_str,
+                    "shift_end": emp_shift_end_str,
                     "checkin_time": checkin_str,
                     "checkout_time": checkout_str,
                     "late_minutes": late_minutes,
@@ -516,7 +598,8 @@ class AttendanceEngine:
                     "punches_count": 0,
                     "notes": notes_str,
                     "condition": condition,
-                    "status_override": status_override
+                    "status_override": status_override,
+                    "is_severe_late": False
                 })
 
         return results
@@ -535,6 +618,7 @@ class AttendanceEngine:
                 "days_present": 0,
                 "days_absent": 0,
                 "days_late": 0,
+                "severe_late_days": 0,
                 "total_late_minutes": 0,
                 "daily_late_records": [],
                 "days_early_leave": 0,
@@ -545,8 +629,13 @@ class AttendanceEngine:
                 "total_working_days": 0,
                 "permission_minutes": 0,
                 "permission_hours": 0.0,
-                "permission_penalty_days": 0,
-                "is_permission_exceeded": False
+                "permission_penalty_days": 0.0,
+                "is_permission_exceeded": False,
+                "monthly_exempt_leave_days": float(self.config.get("monthly_exempt_leave_days", 1.0)),
+                "monthly_exempt_leave_used": 0.0,
+                "deductible_absent_days": 0.0,
+                "annual_leave_total": float(self.config.get("annual_leave_days", 21.0)),
+                "annual_leave_remaining": float(self.config.get("annual_leave_days", 21.0))
             }
 
         # مسح جميع الأيام داخل الفترة
@@ -569,9 +658,13 @@ class AttendanceEngine:
                 if not is_wk:
                     summary_dict[enno]["total_working_days"] += 1
 
-                # حساب دقائق الاستئذان (التأخير + الانصراف المبكر)
+                # رصد أيام التأخير المتجاوزة لساعة ونصف (يخصم يوم كامل)
+                if r.get("is_severe_late", False):
+                    summary_dict[enno]["severe_late_days"] += 1
+
+                # حساب دقائق الاستئذان (التأخير العادي المرحل بعد سماح 30 دقيقة + الانصراف المبكر)
                 day_perm_mins = 0
-                if r["late_minutes"] > 0:
+                if not r.get("is_severe_late", False) and r["late_minutes"] > 0:
                     day_perm_mins += r["late_minutes"]
                 if r.get("early_leave_minutes", 0) > 0:
                     day_perm_mins += r["early_leave_minutes"]
@@ -591,7 +684,7 @@ class AttendanceEngine:
                     if r["checkout_time"] == "--:--:--":
                         summary_dict[enno]["days_missing_checkout"] += 1
                 else:
-                    if r["status"] == "غائب":
+                    if "غائب" in str(r.get("status", "")) or (not is_wk and not r.get("is_present", False)):
                         summary_dict[enno]["days_absent"] += 1
 
             cur_date += one_day
@@ -606,11 +699,27 @@ class AttendanceEngine:
             row["total_hours_worked"] = round(row["total_hours_worked"], 2)
             row["permission_hours"] = round(row["permission_minutes"] / 60.0, 1)
 
-            # تطبيق قاعدة الإذن: إذا تجاوز عدد ساعات الإذن المسموح بها في الشهر يُخصم يوم
+            # 1. قاعدة الإذن: إذا تجاوزت دقائق الاستئذان والتأخير 4 ساعات (240د) يُخصم يوم كامل
             if max_perm_mins > 0 and row["permission_minutes"] > max_perm_mins:
                 row["is_permission_exceeded"] = True
-                row["permission_penalty_days"] = 1
-                row["days_absent"] += 1  # إضافة يوم الخصم للغياب المالي والإداري
+                row["permission_penalty_days"] = 1.0
+            else:
+                row["is_permission_exceeded"] = False
+                row["permission_penalty_days"] = 0.0
+
+            # 2. قاعدة الإجازة الشهرية المعفية (يوم في الشهر إجازة مدفوعة لا يخصم)
+            monthly_exempt_max = float(self.config.get("monthly_exempt_leave_days", 1.0))
+            exempt_used = min(float(row["days_absent"]), monthly_exempt_max)
+            row["monthly_exempt_leave_used"] = exempt_used
+
+            # 3. رصيد الإجازات السنوية (21 يوم في السنة مقسمة على مدار شهور السنة)
+            annual_total = float(self.config.get("annual_leave_days", 21.0))
+            row["annual_leave_total"] = annual_total
+            row["annual_leave_remaining"] = max(0.0, annual_total - exempt_used)
+
+            # 4 & 5. حساب الأيام الخاضعة للخصم المالي = (أيام الغياب - المعفي) + أيام التأخير > 1.5س + جزاء تجاوز الإذن
+            unexempt_absent = max(0.0, float(row["days_absent"]) - exempt_used)
+            row["deductible_absent_days"] = round(unexempt_absent + float(row["severe_late_days"]) + float(row["permission_penalty_days"]), 2)
 
         return sorted(result, key=lambda x: x["enno"])
 
@@ -814,7 +923,10 @@ class AttendanceEngine:
 
     def get_hr_settings(self) -> dict:
         """الحصول على إعدادات وقواعد موديول الرواتب والـ HR"""
-        return self.config.get("hr_settings", dict(DEFAULT_CONFIG.get("hr_settings", {})))
+        hr_cfg = self.config.get("hr_settings", dict(DEFAULT_CONFIG.get("hr_settings", {})))
+        if "payroll_overrides" not in hr_cfg:
+            hr_cfg["payroll_overrides"] = {}
+        return hr_cfg
 
     def save_hr_settings(self, new_settings: dict) -> bool:
         """تحديث وحفظ إعدادات موديول الرواتب"""
@@ -854,14 +966,79 @@ class AttendanceEngine:
         self.config["hr_settings"] = current_hr
         return self.save_config(self.config)
 
+    def get_payroll_overrides(self, enno: int, start_date: Optional[datetime.date] = None, end_date: Optional[datetime.date] = None) -> dict:
+        """جلب التعديلات اليدوية المحفوظة للموظف (سواء لفترة محددة أو عامة)"""
+        hr_cfg = self.get_hr_settings()
+        overrides = hr_cfg.get("payroll_overrides", {})
+        if start_date and end_date:
+            key = f"{enno}_{start_date.isoformat()}_{end_date.isoformat()}"
+            if key in overrides:
+                return dict(overrides[key])
+        if str(enno) in overrides:
+            return dict(overrides[str(enno)])
+        return {}
+
+    def save_payroll_override(self, enno: int, override_data: dict, start_date: Optional[datetime.date] = None, end_date: Optional[datetime.date] = None) -> bool:
+        """حفظ التعديلات اليدوية المباشرة على أرقام مسير الرواتب للموظف"""
+        current_hr = self.get_hr_settings()
+        if "payroll_overrides" not in current_hr or not isinstance(current_hr["payroll_overrides"], dict):
+            current_hr["payroll_overrides"] = {}
+
+        clean_data = {}
+        for k, v in override_data.items():
+            if k == "job_title":
+                clean_data[k] = str(v).strip()
+            else:
+                try:
+                    clean_data[k] = float(v)
+                except (ValueError, TypeError):
+                    clean_data[k] = v
+
+        if start_date and end_date:
+            key = f"{enno}_{start_date.isoformat()}_{end_date.isoformat()}"
+            current_hr["payroll_overrides"][key] = dict(clean_data)
+
+        # حفظ أيضاً بالكود العام للرجوع السريع
+        current_hr["payroll_overrides"][str(enno)] = dict(clean_data)
+
+        self.config["hr_settings"] = current_hr
+        return self.save_config(self.config)
+
+    def clear_payroll_override(self, enno: int, start_date: Optional[datetime.date] = None, end_date: Optional[datetime.date] = None) -> bool:
+        """حذف التعديلات اليدوية واستعادة الأرقام المحسوبة تلقائياً من البصمة"""
+        current_hr = self.get_hr_settings()
+        overrides = current_hr.get("payroll_overrides", {})
+        changed = False
+
+        if start_date and end_date:
+            key = f"{enno}_{start_date.isoformat()}_{end_date.isoformat()}"
+            if key in overrides:
+                del overrides[key]
+                changed = True
+
+        if str(enno) in overrides:
+            del overrides[str(enno)]
+            changed = True
+
+        if changed:
+            current_hr["payroll_overrides"] = overrides
+            self.config["hr_settings"] = current_hr
+            return self.save_config(self.config)
+        return True
+
     def calculate_monthly_payroll(self, start_date: datetime.date, end_date: datetime.date) -> List[Dict[str, Any]]:
-        """حساب مسير الرواتب الكامل لجميع الموظفين للفترة المحددة بناءً على بيانات البصمة وقواعد الـ HR"""
+        """حساب مسير الرواتب الكامل لجميع الموظفين للفترة المحددة بناءً على بيانات البصمة وقواعد الـ HR مع دمج التعديلات اليدوية"""
         hr_cfg = self.get_hr_settings()
         period_summary = self.get_period_summary(start_date, end_date)
         summary_by_enno = {row["enno"]: row for row in period_summary}
 
-        month_basis = float(hr_cfg.get("month_days_basis", 30))
+        month_basis = float(hr_cfg.get("month_days_basis", 30.0))
+        if month_basis <= 0:
+            month_basis = 30.0
         shift_hours = float(hr_cfg.get("shift_hours", 7.0))
+        if shift_hours <= 0:
+            shift_hours = 7.0
+        absence_enabled = bool(hr_cfg.get("absence_deduction_enabled", True))
         absence_multiplier = float(hr_cfg.get("absence_penalty_multiplier", 1.0))
         late_type = hr_cfg.get("late_deduction_type", "minutes")
         late_min_multiplier = float(hr_cfg.get("late_minute_multiplier", 1.0))
@@ -885,19 +1062,27 @@ class AttendanceEngine:
             working_days = att.get("total_working_days", 0)
             days_present = att.get("days_present", 0)
             days_absent = att.get("days_absent", 0)
+            severe_late_days = att.get("severe_late_days", 0)
+            perm_penalty_days = att.get("permission_penalty_days", 0.0)
+            exempt_leave_used = att.get("monthly_exempt_leave_used", min(float(days_absent), 1.0))
+            deductible_absent_days = att.get("deductible_absent_days", max(0.0, float(days_absent) - exempt_leave_used) + severe_late_days + perm_penalty_days)
+            annual_leave_remaining = att.get("annual_leave_remaining", max(0.0, 21.0 - exempt_leave_used))
             days_late = att.get("days_late", 0)
             total_late_mins = att.get("total_late_minutes", 0)
             total_early_mins = att.get("total_early_leave_minutes", 0)
             total_ot_mins = att.get("total_overtime_minutes", 0)
             total_hours = att.get("total_hours_worked", 0.0)
 
-            # معدلات الأجر المالي
+            # معدلات الأجر المالي (أساس الراتب على عدد 30 يوماً)
             day_rate = round(basic_salary / month_basis, 2) if month_basis > 0 else 0.0
             hour_rate = round(day_rate / shift_hours, 2) if shift_hours > 0 else 0.0
             minute_rate = round(hour_rate / 60.0, 4) if shift_hours > 0 else 0.0
 
-            # 1. خصم الغياب
-            absence_deduction = round(days_absent * day_rate * absence_multiplier, 2)
+            # 1. خصم الغياب والجزاءات (أساس الراتب على 30 يوماً × الأيام الخاضعة للخصم بعد استبعاد الإجازة المعفية 1 يوم)
+            if absence_enabled and absence_multiplier > 0:
+                absence_deduction = round(deductible_absent_days * day_rate * absence_multiplier, 2)
+            else:
+                absence_deduction = 0.0
 
             # 2. خصم التأخير
             if late_type == "minutes":
@@ -924,12 +1109,69 @@ class AttendanceEngine:
             # 4. أجر الساعات الإضافية
             overtime_pay = round((total_ot_mins / 60.0) * hour_rate * ot_multiplier, 2)
 
-            # 5. الإجماليات
+            # 5. الإجماليات الأولية
             total_additions = round(allowances + bonuses + overtime_pay, 2)
             penalty_deductions = round(absence_deduction + late_deduction + early_leave_deduction, 2)
             total_deductions = round(penalty_deductions + other_deductions, 2)
             gross_salary = round(basic_salary + total_additions, 2)
             net_salary = round(max(0.0, gross_salary - total_deductions), 2)
+            is_manual = False
+
+            # فحص وجود أي تعديلات يدوية مخصصة لهذا الموظف وتطبيقها
+            ov = self.get_payroll_overrides(enno, start_date, end_date)
+            if ov:
+                is_manual = True
+                if "basic_salary" in ov:
+                    basic_salary = float(ov["basic_salary"])
+                    day_rate = round(basic_salary / month_basis, 2) if month_basis > 0 else 0.0
+                    hour_rate = round(day_rate / shift_hours, 2) if shift_hours > 0 else 0.0
+                if "job_title" in ov:
+                    job_title = str(ov["job_title"])
+                if "days_present" in ov:
+                    days_present = float(ov["days_present"])
+                if "days_absent" in ov:
+                    days_absent = float(ov["days_absent"])
+                    monthly_exempt = float(self.config.get("monthly_exempt_leave_days", 1.0))
+                    exempt_leave_used = min(days_absent, monthly_exempt)
+                    deductible_absent_days = round(max(0.0, days_absent - exempt_leave_used) + severe_late_days + perm_penalty_days, 2)
+                    annual_leave_remaining = max(0.0, float(self.config.get("annual_leave_days", 21.0)) - exempt_leave_used)
+
+                # احتساب خصم الغياب تلقائياً من عدد أيام الغياب الخاضعة للخصم (إلا إذا تم تحديده كمبلغ مالي مخصص يدوياً)
+                if "absence_deduction" in ov and ov.get("custom_absence_deduction", False):
+                    absence_deduction = float(ov["absence_deduction"])
+                elif absence_enabled and absence_multiplier > 0:
+                    absence_deduction = round(deductible_absent_days * day_rate * absence_multiplier, 2)
+                elif "absence_deduction" in ov:
+                    absence_deduction = float(ov["absence_deduction"])
+
+                if "total_late_minutes" in ov:
+                    total_late_mins = float(ov["total_late_minutes"])
+                if "late_deduction" in ov:
+                    late_deduction = float(ov["late_deduction"])
+                if "early_leave_deduction" in ov:
+                    early_leave_deduction = float(ov["early_leave_deduction"])
+                if "other_deductions" in ov:
+                    other_deductions = float(ov["other_deductions"])
+                if "total_additions" in ov:
+                    total_additions = float(ov["total_additions"])
+                elif ("allowances" in ov) or ("bonuses" in ov):
+                    if "allowances" in ov:
+                        allowances = float(ov["allowances"])
+                    if "bonuses" in ov:
+                        bonuses = float(ov["bonuses"])
+                    total_additions = round(allowances + bonuses + overtime_pay, 2)
+
+                penalty_deductions = round(absence_deduction + late_deduction + early_leave_deduction, 2)
+                if "total_deductions" in ov:
+                    total_deductions = float(ov["total_deductions"])
+                else:
+                    total_deductions = round(penalty_deductions + other_deductions, 2)
+
+                gross_salary = round(basic_salary + total_additions, 2)
+                if "net_salary" in ov:
+                    net_salary = float(ov["net_salary"])
+                else:
+                    net_salary = round(max(0.0, gross_salary - total_deductions), 2)
 
             payroll_records.append({
                 "enno": enno,
@@ -939,6 +1181,11 @@ class AttendanceEngine:
                 "working_days": working_days,
                 "days_present": days_present,
                 "days_absent": days_absent,
+                "severe_late_days": severe_late_days,
+                "permission_penalty_days": perm_penalty_days,
+                "monthly_exempt_leave_used": exempt_leave_used,
+                "deductible_absent_days": deductible_absent_days,
+                "annual_leave_remaining": annual_leave_remaining,
                 "days_late": days_late,
                 "total_late_minutes": total_late_mins,
                 "total_early_minutes": total_early_mins,
@@ -956,7 +1203,8 @@ class AttendanceEngine:
                 "overtime_pay": overtime_pay,
                 "total_additions": total_additions,
                 "gross_salary": gross_salary,
-                "net_salary": net_salary
+                "net_salary": net_salary,
+                "is_manual": is_manual
             })
 
         return payroll_records
@@ -1106,7 +1354,7 @@ class AttendanceEngine:
             ws.cell(row=row_num, column=7, value=r["days_absent"]).alignment = center_align
             ws.cell(row=row_num, column=8, value=r["total_late_minutes"]).alignment = center_align
 
-            c_allow = ws.cell(row=row_num, column=9, value=r["allowances"] + r["bonuses"])
+            c_allow = ws.cell(row=row_num, column=9, value=round(r.get("total_additions", r["allowances"] + r["bonuses"]) - r.get("overtime_pay", 0.0), 2))
             c_allow.number_format = "#,##0.00"
             c_allow.alignment = right_align
 
@@ -1242,7 +1490,7 @@ class AttendanceEngine:
                     if emp_rec.get("early_leave_minutes", 0) > 0:
                         days_early_leave += 1
                         total_early_leave_minutes += emp_rec["early_leave_minutes"]
-                elif emp_rec["status"] == "غائب":
+                elif "غائب" in str(emp_rec.get("status", "")) or (not is_wk and not emp_rec.get("is_present", False)):
                     days_absent += 1
 
                 days_records.append({

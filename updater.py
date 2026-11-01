@@ -39,8 +39,8 @@ def get_local_version_info() -> Dict[str, Any]:
         except Exception:
             pass
     return {
-        "version": "2.2.1",
-        "release_date": "2026-10-28",
+        "version": "2.3.0",
+        "release_date": "2026-11-01",
         "repo_owner": DEFAULT_REPO_OWNER,
         "repo_name": DEFAULT_REPO_NAME,
         "changelog": []
@@ -55,7 +55,7 @@ def get_updater_state() -> Dict[str, Any]:
                 return json.load(f)
         except Exception:
             pass
-    return {"last_seen_version": "2.2.1", "pending_changelog": False}
+    return {"last_seen_version": "2.3.0", "pending_changelog": False}
 
 
 def save_updater_state(state: Dict[str, Any]) -> None:

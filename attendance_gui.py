@@ -898,7 +898,7 @@ class AttendanceApp(ctk.CTk):
 
         lbl_hint = ctk.CTkLabel(
             toolbar,
-            text="💡 انقر نقراً مزدوجاً على أي موظف لتعديل راتبه وبدلاته فوراً",
+            text="💡 انقر نقراً مزدوجاً على أي رقم في الجدول لتعديله يدوياً فوراً ✏️",
             font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color=("#64748B", "#D1A562")
         )
@@ -947,8 +947,8 @@ class AttendanceApp(ctk.CTk):
             self.hr_tree.heading(c_id, text=c_name)
             self.hr_tree.column(c_id, width=c_width, anchor=c_align)
 
-        # ربط النقر المزدوج لفتح شاشة التعديل
-        self.hr_tree.bind("<Double-1>", lambda event: self.open_edit_selected_emp_dialog())
+        # ربط النقر المزدوج لفتح شاشة التعديل الفوري لأي رقم
+        self.hr_tree.bind("<Double-1>", self.on_hr_tree_double_click)
 
         v_scroll = ttk.Scrollbar(table_container, orient="vertical", command=self.hr_tree.yview)
         h_scroll = ttk.Scrollbar(table_container, orient="horizontal", command=self.hr_tree.xview)
@@ -1016,18 +1016,22 @@ class AttendanceApp(ctk.CTk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_payroll_results(self, data):
-        """تطبيق نتائج مسير الرواتب وتحديث الجداول والبطاقات في الواجهة"""
-        if hasattr(self, "btn_calc_hr"):
-            self.btn_calc_hr.configure(state="normal", text="الرواتب مسير احتساب ⚡")
+    def _get_current_hr_dates(self):
+        """جلب تاريخي البداية والنهاية الحاليين لتبويب مسير الرواتب بأمان"""
+        try:
+            start_d = datetime.datetime.strptime(self.combo_hr_from.get(), "%Y-%m-%d").date()
+            end_d = datetime.datetime.strptime(self.combo_hr_to.get(), "%Y-%m-%d").date()
+            return start_d, end_d
+        except Exception:
+            return None, None
 
-        self.current_payroll_data = data
-
-        # تحديث بطاقات الـ KPI
-        tot_basic = sum(r["basic_salary"] for r in self.current_payroll_data)
-        tot_add = sum(r["total_additions"] for r in self.current_payroll_data)
-        tot_ded = sum(r["total_deductions"] for r in self.current_payroll_data)
-        tot_net = sum(r["net_salary"] for r in self.current_payroll_data)
+    def refresh_hr_kpis(self):
+        """تحديث بطاقات الـ KPI الأربعة في تبويب الرواتب فوراً وبدقة"""
+        data = getattr(self, "current_payroll_data", [])
+        tot_basic = sum(r.get("basic_salary", 0.0) for r in data)
+        tot_add = sum(r.get("total_additions", 0.0) for r in data)
+        tot_ded = sum(r.get("total_deductions", 0.0) for r in data)
+        tot_net = sum(r.get("net_salary", 0.0) for r in data)
 
         if hasattr(self, "hr_kpi_labels") and "basic" in self.hr_kpi_labels:
             self.hr_kpi_labels["basic"].configure(text=f"{tot_basic:,.2f} ج.م")
@@ -1035,10 +1039,17 @@ class AttendanceApp(ctk.CTk):
             self.hr_kpi_labels["deductions"].configure(text=f"{tot_ded:,.2f} ج.م")
             self.hr_kpi_labels["net"].configure(text=f"{tot_net:,.2f} ج.م")
 
+    def _apply_payroll_results(self, data):
+        """تطبيق نتائج مسير الرواتب وتحديث الجداول والبطاقات في الواجهة"""
+        if hasattr(self, "btn_calc_hr"):
+            self.btn_calc_hr.configure(state="normal", text="الرواتب مسير احتساب ⚡")
+
+        self.current_payroll_data = data
+        self.refresh_hr_kpis()
         self.filter_hr_table()
 
     def filter_hr_table(self):
-        """تطبيق البحث النصي على جدول مسير الرواتب"""
+        """تطبيق البحث النصي على جدول مسير الرواتب وتحديث الصفوف فوراً"""
         if not hasattr(self, "hr_tree") or not hasattr(self, "current_payroll_data"):
             return
 
@@ -1072,7 +1083,7 @@ class AttendanceApp(ctk.CTk):
                     r["days_absent"],
                     f"{r['absence_deduction']:,.2f}",
                     r["total_late_minutes"],
-                    f"{(r['late_deduction'] + r['early_leave_deduction']):,.2f}",
+                    f"{(r['late_deduction'] + r.get('early_leave_deduction', 0.0)):,.2f}",
                     f"{r['other_deductions']:,.2f}",
                     f"{r['total_additions']:,.2f}",
                     f"{r['net_salary']:,.2f}"
@@ -1080,246 +1091,769 @@ class AttendanceApp(ctk.CTk):
                 tags=(tag,)
             )
 
-    def open_edit_selected_emp_dialog(self):
-        """نافذة تعديل راتب وبدلات ومسمى الموظف"""
-        selected = self.hr_tree.selection()
-        if not selected:
-            children = self.hr_tree.get_children()
-            if not children:
-                messagebox.showwarning("تنبيه", "لا توجد بيانات موظفين لعرضها.")
-                return
-            selected = [children[0]]
-            self.hr_tree.selection_set(selected[0])
+    def on_hr_tree_double_click(self, event):
+        """التعامل مع النقر المزدوج على أي رقم أو خلية في جدول الرواتب لفتح شاشة التعديل الفوري"""
+        region = self.hr_tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
 
-        vals = self.hr_tree.item(selected[0], "values")
+        item_id = self.hr_tree.identify_row(event.y)
+        col_str = self.hr_tree.identify_column(event.x)
+        if not item_id or not col_str:
+            return
+
+        self.hr_tree.selection_set(item_id)
+
+        cols = ("idx", "enno", "name", "job_title", "basic", "present", "absent", "abs_ded", "late_mins", "late_ded", "other_ded", "additions", "net")
+        try:
+            col_idx = int(col_str.replace("#", "")) - 1
+            clicked_col = cols[col_idx] if 0 <= col_idx < len(cols) else "basic"
+        except Exception:
+            clicked_col = "basic"
+
+        self.open_edit_employee_payroll_dialog(item_id, focus_col=clicked_col)
+
+    def open_edit_selected_emp_dialog(self):
+        """فتح شاشة تعديل بيانات الموظف المحدد من شريط الأدوات"""
+        selected = self.hr_tree.selection()
+        item_id = selected[0] if selected else None
+        self.open_edit_employee_payroll_dialog(item_id=item_id, focus_col="basic")
+
+    def open_edit_employee_payroll_dialog(self, item_id=None, focus_col="basic"):
+        """نافذة تعديل أي رقم أو قيمة في مسير الرواتب يدويًا مع التركيز المباشر على الحقل المختار"""
+        if not item_id:
+            selected = self.hr_tree.selection()
+            if not selected:
+                children = self.hr_tree.get_children()
+                if not children:
+                    messagebox.showwarning("تنبيه", "لا توجد بيانات موظفين لعرضها في مسير الرواتب.")
+                    return
+                selected = [children[0]]
+                self.hr_tree.selection_set(selected[0])
+            item_id = selected[0]
+
+        vals = self.hr_tree.item(item_id, "values")
+        if not vals or len(vals) < 13:
+            return
+
         enno = int(vals[1])
         emp_name = vals[2]
-        emp_hr = self.engine.get_employee_hr(enno)
+
+        # البحث عن سجل الموظف في البيانات الحالية
+        emp_record = None
+        for r in getattr(self, "current_payroll_data", []):
+            if r["enno"] == enno:
+                emp_record = r
+                break
+
+        def _clean_num(val_str, default=0.0):
+            try:
+                return float(str(val_str).replace(",", "").strip())
+            except Exception:
+                return default
+
+        val_title = emp_record.get("job_title", str(vals[3])) if emp_record else str(vals[3])
+        val_basic = emp_record.get("basic_salary", _clean_num(vals[4])) if emp_record else _clean_num(vals[4])
+        val_present = emp_record.get("days_present", _clean_num(vals[5])) if emp_record else _clean_num(vals[5])
+        val_absent = emp_record.get("days_absent", _clean_num(vals[6])) if emp_record else _clean_num(vals[6])
+        val_abs_ded = emp_record.get("absence_deduction", _clean_num(vals[7])) if emp_record else _clean_num(vals[7])
+        val_late_mins = emp_record.get("total_late_minutes", _clean_num(vals[8])) if emp_record else _clean_num(vals[8])
+        val_late_ded = emp_record.get("late_deduction", _clean_num(vals[9])) if emp_record else _clean_num(vals[9])
+        val_other_ded = emp_record.get("other_deductions", _clean_num(vals[10])) if emp_record else _clean_num(vals[10])
+        val_additions = emp_record.get("total_additions", _clean_num(vals[11])) if emp_record else _clean_num(vals[11])
+        val_net = emp_record.get("net_salary", _clean_num(vals[12])) if emp_record else _clean_num(vals[12])
+
+        col_arabic_map = {
+            "basic": "الراتب الأساسي",
+            "job_title": "المسمى الوظيفي",
+            "present": "أيام الحضور",
+            "absent": "أيام الغياب",
+            "abs_ded": "خصم الغياب",
+            "late_mins": "دقائق التأخير",
+            "late_ded": "خصم التأخير والانصراف",
+            "other_ded": "سلف وخصومات إدارية",
+            "additions": "بدلات ومكافآت وإضافي",
+            "net": "صافي الراتب المستحق"
+        }
 
         dialog = ctk.CTkToplevel(self)
-        dialog.title(f"تعديل راتب وبيانات: {emp_name} (كود {enno})")
-        dialog.geometry("500x520")
-        dialog.resizable(False, False)
+        dialog.title(f"تعديل قيم وراتب الموظف: {emp_name} (كود {enno})")
+        dialog.geometry("620x720")
+        dialog.minsize(560, 580)
         dialog.transient(self)
         dialog.grab_set()
 
+        # الترويسة العلوية
         head_box = ctk.CTkFrame(dialog, corner_radius=0, fg_color=("#FFFFFF", "#120E08"))
         head_box.pack(fill="x")
-        ctk.CTkLabel(head_box, text=f"بيانات الموظف المالية - {emp_name}", font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"), text_color="#F59E0B").pack(pady=(12, 2))
-        ctk.CTkLabel(head_box, text=f"كود البصمة: {enno}", font=ctk.CTkFont(family="Segoe UI", size=11), text_color=("#64748B", "#D1A562")).pack(pady=(0, 10))
 
-        content_box = ctk.CTkFrame(dialog, fg_color="transparent")
-        content_box.pack(fill="both", expand=True, padx=25, pady=15)
+        ctk.CTkLabel(
+            head_box,
+            text=f"تعديل مستحقات وأرقام مسير الرواتب - {emp_name}",
+            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
+            text_color="#F59E0B"
+        ).pack(pady=(12, 2))
 
-        # 1. المسمى الوظيفي
-        row_title = ctk.CTkFrame(content_box, fg_color="transparent")
-        row_title.pack(fill="x", pady=6)
-        ctk.CTkLabel(row_title, text="المسمى الوظيفي:", width=140, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).pack(side="right", padx=5)
-        entry_title = ctk.CTkEntry(row_title, width=220, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_title.insert(0, emp_hr.get("job_title", ""))
-        entry_title.pack(side="right", padx=5)
+        target_name = col_arabic_map.get(focus_col, "الراتب الأساسي")
+        lbl_sub = ctk.CTkLabel(
+            head_box,
+            text=f"كود الموظف: {enno}  |  الحقل المحدد للنقر المزدوج: [{target_name}]",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color=("#64748B", "#D1A562")
+        )
+        lbl_sub.pack(pady=(0, 10))
 
-        # 2. الراتب الأساسي
-        row_salary = ctk.CTkFrame(content_box, fg_color="transparent")
-        row_salary.pack(fill="x", pady=6)
-        ctk.CTkLabel(row_salary, text="الراتب الأساسي (ج.م):", width=140, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).pack(side="right", padx=5)
-        entry_salary = ctk.CTkEntry(row_salary, width=220, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_salary.insert(0, str(emp_hr.get("basic_salary", 0.0)))
-        entry_salary.pack(side="right", padx=5)
+        # حاوية الحقول القابلة للتمرير
+        scroll_frame = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-        # 3. البدلات الشهرية الثابتة
-        row_allow = ctk.CTkFrame(content_box, fg_color="transparent")
-        row_allow.pack(fill="x", pady=6)
-        ctk.CTkLabel(row_allow, text="بدلات شهرية ثابتة (ج.م):", width=140, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
-        entry_allow = ctk.CTkEntry(row_allow, width=220, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_allow.insert(0, str(emp_hr.get("allowances", 0.0)))
-        entry_allow.pack(side="right", padx=5)
+        # دالة مساعدة لإنشاء صف حقل إدخال أنيق
+        def create_field_row(parent, label_text, default_val, is_float=True, note=""):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", pady=4)
 
-        # 4. المكافآت والحوافز
-        row_bonus = ctk.CTkFrame(content_box, fg_color="transparent")
-        row_bonus.pack(fill="x", pady=6)
-        ctk.CTkLabel(row_bonus, text="مكافآت وحوافز (ج.م):", width=140, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
-        entry_bonus = ctk.CTkEntry(row_bonus, width=220, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_bonus.insert(0, str(emp_hr.get("bonuses", 0.0)))
-        entry_bonus.pack(side="right", padx=5)
+            lbl = ctk.CTkLabel(
+                row,
+                text=label_text,
+                width=180,
+                anchor="e",
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
+            )
+            lbl.pack(side="right", padx=5)
 
-        # 5. السلف والخصومات الإدارية
-        row_ded = ctk.CTkFrame(content_box, fg_color="transparent")
-        row_ded.pack(fill="x", pady=6)
-        ctk.CTkLabel(row_ded, text="سلف / خصومات أخرى (ج.م):", width=140, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
-        entry_ded = ctk.CTkEntry(row_ded, width=220, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_ded.insert(0, str(emp_hr.get("deductions", 0.0)))
-        entry_ded.pack(side="right", padx=5)
+            entry = ctk.CTkEntry(
+                row,
+                width=240,
+                height=32,
+                fg_color=("#FFFFFF", "#1F160A"),
+                border_color=("#CBD5E1", "#3D2A0E"),
+                text_color=("#0F172A", "#FFFBEB"),
+                font=ctk.CTkFont(family="Segoe UI", size=12)
+            )
+            if is_float:
+                if isinstance(default_val, float) and default_val.is_integer():
+                    entry.insert(0, str(int(default_val)))
+                else:
+                    entry.insert(0, f"{default_val:.2f}" if is_float else str(default_val))
+            else:
+                entry.insert(0, str(default_val))
+            entry.pack(side="right", padx=5)
 
-        # شريط معاينة المعدلات
-        rate_box = ctk.CTkFrame(content_box, corner_radius=8, fg_color=("#F1F5F9", "#1F160A"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
-        rate_box.pack(fill="x", pady=12)
-        lbl_rates = ctk.CTkLabel(rate_box, text="حساب الأجر اليومي والساعي...", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"), text_color="#F59E0B")
-        lbl_rates.pack(pady=8)
+            if note:
+                ctk.CTkLabel(
+                    row,
+                    text=note,
+                    font=ctk.CTkFont(family="Segoe UI", size=10),
+                    text_color=("#94A3B8", "#78664D")
+                ).pack(side="left", padx=5)
 
-        def update_rates(*args):
+            return entry
+
+        # 1) كرت البيانات الأساسية والوظيفية
+        card_basic = ctk.CTkFrame(scroll_frame, corner_radius=8, fg_color=("#F8FAFC", "#171005"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
+        card_basic.pack(fill="x", pady=5, padx=5)
+        ctk.CTkLabel(card_basic, text="💼 البيانات الوظيفية والأساسية", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), text_color="#F59E0B").pack(anchor="e", padx=12, pady=(8, 4))
+        entry_title = create_field_row(card_basic, "المسمى الوظيفي:", val_title if val_title != "-" else "", is_float=False)
+        entry_basic = create_field_row(card_basic, "الراتب الأساسي (ج.م):", val_basic)
+
+        # 1.5) كرت مواعيد الوردية والإجازات الأسبوعية لهذا الموظف
+        card_sched = ctk.CTkFrame(scroll_frame, corner_radius=8, fg_color=("#F8FAFC", "#171005"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
+        card_sched.pack(fill="x", pady=5, padx=5)
+        ctk.CTkLabel(card_sched, text="⏰ مواعيد الوردية والإجازات الأسبوعية للموظف", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), text_color="#F59E0B").pack(anchor="e", padx=12, pady=(8, 4))
+
+        _, _, cur_shift_start, cur_shift_end = self.engine.get_employee_shift(enno)
+        cur_emp_wk = self.engine.get_employee_weekend_days(enno)
+
+        sched_shift_row = ctk.CTkFrame(card_sched, fg_color="transparent")
+        sched_shift_row.pack(fill="x", padx=12, pady=4)
+
+        ctk.CTkLabel(sched_shift_row, text="ميعاد الحضور:", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")).pack(side="right", padx=(5, 2))
+        entry_dlg_shift_start = ctk.CTkEntry(
+            sched_shift_row,
+            width=80,
+            height=28,
+            fg_color=("#FFFFFF", "#1F160A"),
+            border_color=("#CBD5E1", "#3D2A0E"),
+            text_color=("#0F172A", "#FFFBEB"),
+            font=ctk.CTkFont(family="Segoe UI", size=11)
+        )
+        entry_dlg_shift_start.insert(0, cur_shift_start)
+        entry_dlg_shift_start.pack(side="right", padx=(0, 15))
+
+        ctk.CTkLabel(sched_shift_row, text="ميعاد الانصراف:", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")).pack(side="right", padx=(5, 2))
+        entry_dlg_shift_end = ctk.CTkEntry(
+            sched_shift_row,
+            width=80,
+            height=28,
+            fg_color=("#FFFFFF", "#1F160A"),
+            border_color=("#CBD5E1", "#3D2A0E"),
+            text_color=("#0F172A", "#FFFBEB"),
+            font=ctk.CTkFont(family="Segoe UI", size=11)
+        )
+        entry_dlg_shift_end.insert(0, cur_shift_end)
+        entry_dlg_shift_end.pack(side="right", padx=(0, 10))
+
+        # صف أيام الإجازة الأسبوعية للموظف
+        sched_wk_row = ctk.CTkFrame(card_sched, fg_color="transparent")
+        sched_wk_row.pack(fill="x", padx=12, pady=(4, 8))
+        ctk.CTkLabel(sched_wk_row, text="أيام الإجازة:", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")).pack(side="right", padx=(5, 8))
+
+        dlg_wk_vars = {}
+        for d_num, d_name in [(5, "السبت"), (6, "الأحد"), (0, "الإثنين"), (1, "الثلاثاء"), (2, "الأربعاء"), (3, "الخميس"), (4, "الجمعة")]:
+            v = ctk.BooleanVar(value=(d_num in cur_emp_wk))
+            dlg_wk_vars[d_num] = v
+            chk = ctk.CTkCheckBox(sched_wk_row, text=d_name, variable=v, width=65, font=ctk.CTkFont(family="Segoe UI", size=10))
+            chk.pack(side="right", padx=2)
+
+        # 2) كرت الحضور والانضباط
+        card_att = ctk.CTkFrame(scroll_frame, corner_radius=8, fg_color=("#F8FAFC", "#171005"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
+        card_att.pack(fill="x", pady=5, padx=5)
+        ctk.CTkLabel(card_att, text="📅 سجل الحضور والانضباط (أيام ودقائق)", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), text_color="#F59E0B").pack(anchor="e", padx=12, pady=(8, 4))
+        entry_present = create_field_row(card_att, "أيام الحضور (يوم):", val_present)
+        entry_absent = create_field_row(card_att, "أيام الغياب (يوم):", val_absent)
+        entry_late_mins = create_field_row(card_att, "إجمالي دقائق التأخير (د):", val_late_mins)
+
+        # 3) كرت الاستقطاعات والجزاءات (-)
+        card_ded = ctk.CTkFrame(scroll_frame, corner_radius=8, fg_color=("#F8FAFC", "#171005"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
+        card_ded.pack(fill="x", pady=5, padx=5)
+
+        ded_head_row = ctk.CTkFrame(card_ded, fg_color="transparent")
+        ded_head_row.pack(fill="x", padx=10, pady=(8, 4))
+        ctk.CTkLabel(ded_head_row, text="🔻 الاستقطاعات والجزاءات المالية (-)", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), text_color="#EF4444").pack(side="right")
+
+        var_auto_abs_ded = ctk.BooleanVar(value=True)
+        switch_auto_abs = ctk.CTkSwitch(
+            ded_head_row,
+            text="احتساب خصم الغياب تلقائياً: (أيام الغياب × الراتب ÷ 30)",
+            variable=var_auto_abs_ded,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            progress_color="#F59E0B"
+        )
+        switch_auto_abs.pack(side="left")
+
+        entry_abs_ded = create_field_row(card_ded, "خصم الغياب (ج.م):", val_abs_ded)
+        
+        lbl_abs_helper = ctk.CTkLabel(card_ded, text="", font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"), text_color="#D1A562")
+        lbl_abs_helper.pack(anchor="e", padx=15, pady=(0, 2))
+
+        entry_late_ded = create_field_row(card_ded, "خصم التأخير والانصراف (ج.م):", val_late_ded)
+        entry_other_ded = create_field_row(card_ded, "سلف وخصومات إدارية (ج.م):", val_other_ded)
+
+        # 4) كرت البدلات والإضافات (+)
+        card_add = ctk.CTkFrame(scroll_frame, corner_radius=8, fg_color=("#F8FAFC", "#171005"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
+        card_add.pack(fill="x", pady=5, padx=5)
+        ctk.CTkLabel(card_add, text="➕ البدلات والمكافآت والإضافي (+)", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), text_color="#10B981").pack(anchor="e", padx=12, pady=(8, 4))
+        entry_additions = create_field_row(card_add, "إجمالي البدلات والإضافي (ج.م):", val_additions)
+
+        # 5) كرت صافي الراتب النهائي (=)
+        card_net = ctk.CTkFrame(scroll_frame, corner_radius=8, fg_color=("#F8FAFC", "#171005"), border_width=1.5, border_color=("#CBD5E1", "#D97706"))
+        card_net.pack(fill="x", pady=6, padx=5)
+
+        net_header_row = ctk.CTkFrame(card_net, fg_color="transparent")
+        net_header_row.pack(fill="x", padx=10, pady=(6, 2))
+
+        var_auto_net = ctk.BooleanVar(value=True)
+        switch_auto = ctk.CTkSwitch(
+            net_header_row,
+            text="احتساب الصافي تلقائياً: (الأساسي + البدلات - الخصومات)",
+            variable=var_auto_net,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            progress_color="#F59E0B"
+        )
+        switch_auto.pack(side="right")
+
+        entry_net = create_field_row(card_net, "صافي الراتب المستحق (ج.م):", val_net)
+
+        # شريط المعاينة اللحظية للإجماليات
+        lbl_live_calc = ctk.CTkLabel(
+            card_net,
+            text="جاري احتساب الصافي...",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#F59E0B"
+        )
+        lbl_live_calc.pack(pady=(4, 8))
+
+        # دالة الحساب اللحظي المباشر
+        def update_live_net(*args):
             try:
-                s = float(entry_salary.get().strip() or "0")
-                d_rate = s / 30.0
-                h_rate = d_rate / 7.0
-                lbl_rates.configure(text=f"أجر اليوم التقريبي: {d_rate:.2f} ج.م  |  أجر الساعة: {h_rate:.2f} ج.م")
+                b = float(entry_basic.get().strip() or "0")
+                add = float(entry_additions.get().strip() or "0")
+                d_late = float(entry_late_ded.get().strip() or "0")
+                d_oth = float(entry_other_ded.get().strip() or "0")
+
+                # احتساب أجر وقيمة خصم الغياب بالمعادلة: (الراتب ÷ 30 يوماً × معامل الخصم × أيام الغياب)
+                hr_cfg_curr = self.engine.get_hr_settings()
+                abs_on = hr_cfg_curr.get("absence_deduction_enabled", True)
+                abs_m = hr_cfg_curr.get("absence_penalty_multiplier", 1.0)
+                m_days = float(hr_cfg_curr.get("month_days_basis", 30.0) or 30.0)
+                if m_days <= 0:
+                    m_days = 30.0
+                d_rate = b / m_days
+                try:
+                    curr_ab_days = float(entry_absent.get().strip() or "0")
+                except Exception:
+                    curr_ab_days = 0.0
+
+                # تطبيق الإعفاء الشهري (يوم في الشهر إجازة مدفوعة لا يخصم من الراتب من رصيد 21 يوماً)
+                monthly_exempt = float(self.engine.config.get("monthly_exempt_leave_days", 1.0))
+                exempt_days = min(curr_ab_days, monthly_exempt)
+                deductible_days = max(0.0, curr_ab_days - exempt_days)
+
+                calc_abs_val = round(deductible_days * d_rate * abs_m, 2) if abs_on and abs_m > 0 else 0.0
+
+                # إذا كان احتساب خصم الغياب التلقائي مفعلاً، يتم تعبئة خانة الخصم بقيمة الغياب المحسوبة فوراً
+                if var_auto_abs_ded.get():
+                    formatted_val = f"{calc_abs_val:.2f}"
+                    if entry_abs_ded.get().strip() != formatted_val:
+                        entry_abs_ded.delete(0, "end")
+                        entry_abs_ded.insert(0, formatted_val)
+                    d_abs = calc_abs_val
+                else:
+                    d_abs = float(entry_abs_ded.get().strip() or "0")
+
+                tot_d = round(d_abs + d_late + d_oth, 2)
+                tot_gross = round(b + add, 2)
+                calc_net = round(max(0.0, tot_gross - tot_d), 2)
+
+                lbl_live_calc.configure(
+                    text=f"المستحق: {tot_gross:,.2f} ج.م  |  الخصم: {tot_d:,.2f} ج.م  |  الصافي: {calc_net:,.2f} ج.م"
+                )
+
+                if abs_on and abs_m > 0:
+                    lbl_abs_helper.configure(
+                        text=f"💡 أجر اليوم = {d_rate:,.2f} ج.م | إجازة معفية: {exempt_days:g} يوم | الخاضع للخصم: {deductible_days:g} يوم | الخصم: {calc_abs_val:,.2f} ج.م",
+                        text_color="#D1A562"
+                    )
+                else:
+                    lbl_abs_helper.configure(
+                        text="⚠️ خصم الغياب معطّل حالياً في السياسات العامة",
+                        text_color="#94A3B8"
+                    )
+
+                if var_auto_net.get():
+                    entry_net.delete(0, "end")
+                    entry_net.insert(0, f"{calc_net:.2f}")
             except Exception:
-                lbl_rates.configure(text="يرجى إدخال أرقام صحيحة للراتب")
+                pass
 
-        entry_salary.bind("<KeyRelease>", update_rates)
-        update_rates()
+        def on_manual_abs_ded_edit(*args):
+            # إذا قام المستخدم بكتابة قيمة يدوية في خانة خصم الغياب مباشرة
+            var_auto_abs_ded.set(False)
+            update_live_net()
 
-        # أزرار الحفظ والإلغاء
+        switch_auto.configure(command=update_live_net)
+        switch_auto_abs.configure(command=update_live_net)
+        
+        for ent in [entry_basic, entry_absent, entry_additions, entry_late_ded, entry_other_ded]:
+            ent.bind("<KeyRelease>", update_live_net)
+        entry_abs_ded.bind("<KeyRelease>", on_manual_abs_ded_edit)
+        update_live_net()
+
+        # خريطة الحقول للتركيز التلقائي على الحقل المنقور عليه مرتين
+        entry_map = {
+            "basic": entry_basic,
+            "job_title": entry_title,
+            "present": entry_present,
+            "absent": entry_absent,
+            "abs_ded": entry_abs_ded,
+            "late_mins": entry_late_mins,
+            "late_ded": entry_late_ded,
+            "other_ded": entry_other_ded,
+            "additions": entry_additions,
+            "net": entry_net
+        }
+
+        target_entry = entry_map.get(focus_col, entry_basic)
+        target_entry.configure(border_color="#F59E0B", border_width=2)
+        dialog.after(120, lambda: [target_entry.focus_set(), target_entry.select_range(0, "end")])
+
+        # أزرار الإجراءات السفلية
         btn_box = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_box.pack(fill="x", padx=25, pady=(5, 20))
+        btn_box.pack(fill="x", padx=20, pady=(6, 16))
 
-        def on_save():
+        def on_save(*args):
             try:
-                sal = float(entry_salary.get().strip())
-                alw = float(entry_allow.get().strip())
-                bon = float(entry_bonus.get().strip())
-                ded = float(entry_ded.get().strip())
-                title = entry_title.get().strip()
+                new_basic = float(entry_basic.get().strip() or "0")
+                new_title = entry_title.get().strip()
+                new_present = float(entry_present.get().strip() or "0")
+                new_absent = float(entry_absent.get().strip() or "0")
+                new_late_mins = float(entry_late_mins.get().strip() or "0")
+                new_abs_ded = float(entry_abs_ded.get().strip() or "0")
+                new_late_ded = float(entry_late_ded.get().strip() or "0")
+                new_other_ded = float(entry_other_ded.get().strip() or "0")
+                new_additions = float(entry_additions.get().strip() or "0")
+                new_net = float(entry_net.get().strip() or "0")
 
-                if sal < 0 or alw < 0 or bon < 0 or ded < 0:
-                    messagebox.showerror("خطأ", "لا يمكن إدخال قيم سالبة.")
+                if new_basic < 0 or new_abs_ded < 0 or new_late_ded < 0 or new_other_ded < 0 or new_additions < 0 or new_net < 0:
+                    messagebox.showerror("خطأ", "لا يمكن حفظ مبالغ مالية سالبة.")
                     return
 
-                new_data = {
-                    "job_title": title,
-                    "basic_salary": sal,
-                    "allowances": alw,
-                    "bonuses": bon,
-                    "deductions": ded
+                # 1. حفظ البيانات الوظيفية الأساسية
+                self.engine.save_employee_hr(enno, {
+                    "basic_salary": new_basic,
+                    "job_title": new_title,
+                    "allowances": new_additions,
+                    "bonuses": 0.0,
+                    "deductions": new_other_ded
+                })
+
+                # 1.1 حفظ مواعيد الوردية والإجازات الأسبوعية الخاصة بالموظف
+                s_start_val = entry_dlg_shift_start.get().strip()
+                s_end_val = entry_dlg_shift_end.get().strip()
+                try:
+                    self.engine.parse_time_str(s_start_val)
+                    self.engine.parse_time_str(s_end_val)
+                    self.engine.set_employee_shift(enno, s_start_val, s_end_val)
+                except Exception:
+                    pass
+                dlg_sel_days = [d_num for d_num, v in dlg_wk_vars.items() if v.get()]
+                self.engine.set_employee_weekend_days(enno, dlg_sel_days)
+
+                # 2. حفظ التعديل اليدوي الكامل للمسير للفترة الحالية
+                start_d, end_d = self._get_current_hr_dates()
+                tot_ded = round(new_abs_ded + new_late_ded + new_other_ded, 2)
+                override_data = {
+                    "basic_salary": new_basic,
+                    "job_title": new_title,
+                    "days_present": new_present,
+                    "days_absent": new_absent,
+                    "total_late_minutes": new_late_mins,
+                    "absence_deduction": new_abs_ded,
+                    "custom_absence_deduction": not var_auto_abs_ded.get(),
+                    "late_deduction": new_late_ded,
+                    "other_deductions": new_other_ded,
+                    "total_additions": new_additions,
+                    "total_deductions": tot_ded,
+                    "net_salary": new_net
                 }
-                self.engine.save_employee_hr(enno, new_data)
+                self.engine.save_payroll_override(enno, override_data, start_d, end_d)
+
+                # 3. تحديث السجل في الذاكرة فوراً دون الحاجة لإعادة قراءة بطيئة
+                for r in getattr(self, "current_payroll_data", []):
+                    if r["enno"] == enno:
+                        r["basic_salary"] = new_basic
+                        r["job_title"] = new_title
+                        r["days_present"] = new_present
+                        r["days_absent"] = new_absent
+                        r["total_late_minutes"] = new_late_mins
+                        r["absence_deduction"] = new_abs_ded
+                        r["late_deduction"] = new_late_ded
+                        r["other_deductions"] = new_other_ded
+                        r["total_additions"] = new_additions
+                        r["total_deductions"] = tot_ded
+                        r["gross_salary"] = round(new_basic + new_additions, 2)
+                        r["net_salary"] = new_net
+                        r["is_manual"] = True
+                        break
+
+                # 4. تحديث الجدول وبطاقات الـ KPI فوراً
+                self.filter_hr_table()
+                self.refresh_hr_kpis()
+
                 dialog.destroy()
-                self.update_hr_view()
-                messagebox.showinfo("تم الحفظ", f"تم تحديث بيانات وراتب الموظف {emp_name} بنجاح.")
+                messagebox.showinfo("تم الحفظ", f"تم تحديث بيانات ومستحقات الموظف {emp_name} يدوياً بنجاح.")
             except ValueError:
                 messagebox.showerror("خطأ", "يرجى التأكد من كتابة الأرقام بشكل صحيح.")
 
-        btn_save = ctk.CTkButton(btn_box, text="حفظ التعديلات 💾", command=on_save, fg_color="#D97706", hover_color="#B45309", width=160, height=36, font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"))
+        def on_reset_auto():
+            if not messagebox.askyesno("تأكيد الاستعادة", f"هل تريد بالتأكيد إلغاء التعديلات اليدوية للموظف {emp_name} واستعادة الأرقام المحسوبة تلقائياً من البصمة؟"):
+                return
+            start_d, end_d = self._get_current_hr_dates()
+            self.engine.clear_payroll_override(enno, start_d, end_d)
+            dialog.destroy()
+            self.update_hr_view()
+
+        # ربط زر Enter وزر Esc
+        dialog.bind("<Return>", on_save)
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        for ent in entry_map.values():
+            ent.bind("<Return>", on_save)
+
+        btn_save = ctk.CTkButton(
+            btn_box,
+            text="حفظ وتطبيق التعديل 💾 (Enter)",
+            command=on_save,
+            fg_color="#D97706",
+            hover_color="#B45309",
+            width=180,
+            height=36,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
+        )
         btn_save.pack(side="right", padx=5)
 
-        btn_cancel = ctk.CTkButton(btn_box, text="إلغاء", command=dialog.destroy, fg_color=("#94A3B8", "#241808"), hover_color=("#64748B", "#3D2A0E"), text_color=("#0F172A", "#FEF3C7"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"), width=90, height=36)
+        btn_reset = ctk.CTkButton(
+            btn_box,
+            text="استعادة الحساب التلقائي 🔄",
+            command=on_reset_auto,
+            fg_color="#1E40AF",
+            hover_color="#1E3A8A",
+            text_color="#FFFFFF",
+            width=160,
+            height=36,
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
+        btn_reset.pack(side="right", padx=5)
+
+        btn_cancel = ctk.CTkButton(
+            btn_box,
+            text="إلغاء (Esc)",
+            command=dialog.destroy,
+            fg_color=("#94A3B8", "#241808"),
+            hover_color=("#64748B", "#3D2A0E"),
+            text_color=("#0F172A", "#FEF3C7"),
+            border_width=1,
+            border_color=("#CBD5E1", "#3D2A0E"),
+            width=90,
+            height=36
+        )
         btn_cancel.pack(side="left", padx=5)
 
     def open_hr_policies_dialog(self):
-        """نافذة إعدادات سياسات الرواتب ونسب الخصم للغياب والتأخير"""
+        """نافذة إعدادات سياسات الرواتب ونسب الخصم للغياب والتأخير مع دعم تفعيل/إلغاء خصم الغياب وأساس 30 يوماً"""
         hr_cfg = self.engine.get_hr_settings()
 
         dialog = ctk.CTkToplevel(self)
         dialog.title("قواعد وسياسات احتساب الرواتب والخصومات")
-        dialog.geometry("540x530")
-        dialog.resizable(False, False)
+        dialog.geometry("620x680")
+        dialog.minsize(580, 580)
         dialog.transient(self)
         dialog.grab_set()
 
         head_box = ctk.CTkFrame(dialog, corner_radius=0, fg_color=("#FFFFFF", "#120E08"))
         head_box.pack(fill="x")
-        ctk.CTkLabel(head_box, text="سياسات الـ HR والخصومات المعتمدة", font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"), text_color="#F59E0B").pack(pady=(12, 2))
-        ctk.CTkLabel(head_box, text="تحديد نسب خصم الغياب والتأخير ومعدلات أجر الساعات", font=ctk.CTkFont(family="Segoe UI", size=11), text_color=("#64748B", "#D1A562")).pack(pady=(0, 10))
+        ctk.CTkLabel(head_box, text="سياسات الـ HR والخصومات المعتمدة", font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"), text_color="#F59E0B").pack(pady=(12, 2))
+        ctk.CTkLabel(head_box, text="تحديد قواعد خصم الغياب والتأخير ومعدلات الأجر اليومي والساعي", font=ctk.CTkFont(family="Segoe UI", size=11), text_color=("#64748B", "#D1A562")).pack(pady=(0, 10))
 
-        content_box = ctk.CTkFrame(dialog, fg_color="transparent")
-        content_box.pack(fill="both", expand=True, padx=25, pady=15)
+        scroll_box = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        scroll_box.pack(fill="both", expand=True, padx=20, pady=10)
 
-        # 1. معامل خصم يوم الغياب
-        r1 = ctk.CTkFrame(content_box, fg_color="transparent")
-        r1.pack(fill="x", pady=6)
-        ctk.CTkLabel(r1, text="معامل خصم يوم الغياب:", width=180, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).pack(side="right", padx=5)
-        entry_abs_mult = ctk.CTkEntry(r1, width=120, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_abs_mult.insert(0, str(hr_cfg.get("absence_penalty_multiplier", 1.0)))
+        # ==================== كرت 1: سياسة خصم أيام الغياب ====================
+        card_abs = ctk.CTkFrame(scroll_box, corner_radius=10, fg_color=("#F8FAFC", "#171005"), border_width=1.5, border_color=("#CBD5E1", "#D97706"))
+        card_abs.pack(fill="x", pady=6, padx=5)
+
+        head_abs = ctk.CTkFrame(card_abs, fg_color="transparent")
+        head_abs.pack(fill="x", padx=12, pady=(10, 4))
+
+        ctk.CTkLabel(head_abs, text="📅 سياسة خصم أيام الغياب (أساس 30 يوماً)", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"), text_color="#F59E0B").pack(side="right")
+
+        # مفتاح تفعيل أو إلغاء خصم أيام الغياب
+        curr_abs_enabled = hr_cfg.get("absence_deduction_enabled", True if hr_cfg.get("absence_penalty_multiplier", 1.0) > 0 else False)
+        var_abs_enabled = ctk.BooleanVar(value=curr_abs_enabled)
+        switch_abs = ctk.CTkSwitch(
+            head_abs,
+            text="تفعيل خصم أيام الغياب",
+            variable=var_abs_enabled,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            progress_color="#10B981"
+        )
+        switch_abs.pack(side="left")
+
+        lbl_rule_info = ctk.CTkLabel(
+            card_abs,
+            text="📌 قاعدة الاحتساب: أجر يوم الغياب = الراتب الأساسي ÷ 30 يوماً",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#10B981"
+        )
+        lbl_rule_info.pack(anchor="e", padx=14, pady=(2, 6))
+
+        # صف عدد أيام الخصم لكل يوم غياب
+        r_mult = ctk.CTkFrame(card_abs, fg_color="transparent")
+        r_mult.pack(fill="x", padx=12, pady=4)
+        ctk.CTkLabel(r_mult, text="عدد أيام الخصم لكل يوم غياب:", width=190, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).pack(side="right", padx=5)
+
+        curr_mult = hr_cfg.get("absence_penalty_multiplier", 1.0)
+        if curr_mult <= 0:
+            curr_mult = 1.0
+        entry_abs_mult = ctk.CTkEntry(r_mult, width=100, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
+        entry_abs_mult.insert(0, str(curr_mult))
         entry_abs_mult.pack(side="right", padx=5)
-        ctk.CTkLabel(r1, text="1 = خصم يوم، 1.5 = يوم ونصف، 2 = يومين", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
 
-        # 2. طريقة احتساب خصم التأخير
-        r2 = ctk.CTkFrame(content_box, fg_color="transparent")
-        r2.pack(fill="x", pady=6)
+        # أزرار الاختيار السريع لأيام الخصم
+        r_presets = ctk.CTkFrame(card_abs, fg_color="transparent")
+        r_presets.pack(fill="x", padx=12, pady=4)
+        ctk.CTkLabel(r_presets, text="خيارات سريعة:", width=100, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=11), text_color="#94A3B8").pack(side="right", padx=5)
+
+        def set_preset_mult(val):
+            entry_abs_mult.delete(0, "end")
+            entry_abs_mult.insert(0, str(val))
+            update_abs_preview()
+
+        ctk.CTkButton(r_presets, text="1 يوم (يوم بيوم)", width=105, height=26, fg_color=("#E2E8F0", "#241808"), hover_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FEF3C7"), command=lambda: set_preset_mult(1.0)).pack(side="right", padx=3)
+        ctk.CTkButton(r_presets, text="1.5 يوم (يوم ونصف)", width=120, height=26, fg_color=("#E2E8F0", "#241808"), hover_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FEF3C7"), command=lambda: set_preset_mult(1.5)).pack(side="right", padx=3)
+        ctk.CTkButton(r_presets, text="2 يوم (يومان جزاء)", width=115, height=26, fg_color=("#E2E8F0", "#241808"), hover_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FEF3C7"), command=lambda: set_preset_mult(2.0)).pack(side="right", padx=3)
+
+        # صندوق المعاينة الحية لخصم الغياب
+        box_preview = ctk.CTkFrame(card_abs, corner_radius=6, fg_color=("#F1F5F9", "#1F160A"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
+        box_preview.pack(fill="x", padx=12, pady=(6, 12))
+        lbl_abs_preview = ctk.CTkLabel(box_preview, text="جاري الحساب...", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"), text_color="#F59E0B")
+        lbl_abs_preview.pack(pady=6)
+
+        def update_abs_preview(*args):
+            try:
+                is_on = var_abs_enabled.get()
+                if not is_on:
+                    lbl_abs_preview.configure(
+                        text="⚠️ خصم أيام الغياب معطّل حالياً (لن يتم تطبيق أي استقطاع مالي على أيام الغياب)",
+                        text_color="#EF4444"
+                    )
+                    entry_abs_mult.configure(state="disabled")
+                    return
+
+                entry_abs_mult.configure(state="normal")
+                m = float(entry_abs_mult.get().strip() or "1.0")
+                demo_sal = 6000.0
+                d_rate = demo_sal / 30.0
+                demo_days = 2.0
+                tot_ded = demo_days * d_rate * m
+                lbl_abs_preview.configure(
+                    text=f"مثال: موظف راتبه 6,000 ج.م غاب يومين -> أجر اليوم (6000 ÷ 30) = {d_rate:.0f} ج.م | الخصم = 2 × {d_rate:.0f} × {m:g} = {tot_ded:,.2f} ج.م",
+                    text_color="#F59E0B"
+                )
+            except Exception:
+                lbl_abs_preview.configure(text="يرجى كتابة رقم صحيح لمعامل الخصم", text_color="#EF4444")
+
+        switch_abs.configure(command=update_abs_preview)
+        entry_abs_mult.bind("<KeyRelease>", update_abs_preview)
+        update_abs_preview()
+
+        # ==================== كرت 2: سياسة خصم التأخير والانصراف ====================
+        card_late = ctk.CTkFrame(scroll_box, corner_radius=10, fg_color=("#F8FAFC", "#171005"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
+        card_late.pack(fill="x", pady=6, padx=5)
+        ctk.CTkLabel(card_late, text="⏰ سياسة خصم التأخير والانصراف المبكر", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"), text_color="#F59E0B").pack(anchor="e", padx=12, pady=(10, 4))
+
+        r2 = ctk.CTkFrame(card_late, fg_color="transparent")
+        r2.pack(fill="x", padx=12, pady=4)
         ctk.CTkLabel(r2, text="طريقة احتساب خصم التأخير:", width=180, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).pack(side="right", padx=5)
-        combo_late_type = ctk.CTkComboBox(r2, values=["حساب بالدقائق (دقيقة بدقيقة)", "نظام شرائح التأخير اليومية"], width=190)
+        combo_late_type = ctk.CTkComboBox(r2, values=["حساب بالدقائق (دقيقة بدقيقة)", "نظام شرائح التأخير اليومية"], width=200)
         if hr_cfg.get("late_deduction_type") == "tiers":
             combo_late_type.set("نظام شرائح التأخير اليومية")
         else:
             combo_late_type.set("حساب بالدقائق (دقيقة بدقيقة)")
         combo_late_type.pack(side="right", padx=5)
 
-        # 3. معامل دقيقة التأخير
-        r3 = ctk.CTkFrame(content_box, fg_color="transparent")
-        r3.pack(fill="x", pady=6)
+        r3 = ctk.CTkFrame(card_late, fg_color="transparent")
+        r3.pack(fill="x", padx=12, pady=4)
         ctk.CTkLabel(r3, text="مضاعف دقيقة التأخير:", width=180, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
-        entry_late_mult = ctk.CTkEntry(r3, width=120, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
+        entry_late_mult = ctk.CTkEntry(r3, width=100, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
         entry_late_mult.insert(0, str(hr_cfg.get("late_minute_multiplier", 1.0)))
         entry_late_mult.pack(side="right", padx=5)
-        ctk.CTkLabel(r3, text="1 = عادي، 1.5 = دقيقة ونصف، 2 = ضعف", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
+        ctk.CTkLabel(r3, text="(1 = عادي، 1.5 = دقيقة ونصف، 2 = دقيقتين)", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
 
-        # 4. أساس أيام الشهر لاحتساب أجر اليوم
-        r4 = ctk.CTkFrame(content_box, fg_color="transparent")
-        r4.pack(fill="x", pady=6)
-        ctk.CTkLabel(r4, text="أساس أيام الشهر للأجر:", width=180, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
-        entry_month_days = ctk.CTkEntry(r4, width=120, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_month_days.insert(0, str(hr_cfg.get("month_days_basis", 30)))
-        entry_month_days.pack(side="right", padx=5)
-        ctk.CTkLabel(r4, text="عادة 30 يوماً أو 26 يوماً", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
-
-        # 5. ساعات العمل اليومية
-        r5 = ctk.CTkFrame(content_box, fg_color="transparent")
-        r5.pack(fill="x", pady=6)
-        ctk.CTkLabel(r5, text="ساعات العمل اليومية الرسمية:", width=180, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
-        entry_shift_h = ctk.CTkEntry(r5, width=120, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_shift_h.insert(0, str(hr_cfg.get("shift_hours", 7.0)))
-        entry_shift_h.pack(side="right", padx=5)
-        ctk.CTkLabel(r5, text="لاحتساب أجر الساعة (مثلاً 7 أو 8)", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
-
-        # 6. معامل الساعات الإضافية
-        r6 = ctk.CTkFrame(content_box, fg_color="transparent")
-        r6.pack(fill="x", pady=6)
-        ctk.CTkLabel(r6, text="معامل الساعات الإضافية:", width=180, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
-        entry_ot_mult = ctk.CTkEntry(r6, width=120, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
-        entry_ot_mult.insert(0, str(hr_cfg.get("overtime_multiplier", 1.5)))
-        entry_ot_mult.pack(side="right", padx=5)
-        ctk.CTkLabel(r6, text="مثلاً 1.5 = ساعة ونصف لكل ساعة عمل", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
-
-        # 7. احتساب خصم الانصراف المبكر
-        r7 = ctk.CTkFrame(content_box, fg_color="transparent")
-        r7.pack(fill="x", pady=8)
+        r7 = ctk.CTkFrame(card_late, fg_color="transparent")
+        r7.pack(fill="x", padx=12, pady=(4, 10))
         var_early_ded = ctk.BooleanVar(value=hr_cfg.get("early_leave_deduction", True))
         chk_early = ctk.CTkCheckBox(r7, text="احتساب خصم الانصراف المبكر قبل نهاية الوردية", variable=var_early_ded, font=ctk.CTkFont(family="Segoe UI", size=12))
         chk_early.pack(side="right", padx=5)
 
-        # أزرار الحفظ
+        # ==================== كرت 3: قواعد الأجر وساعات العمل ====================
+        card_work = ctk.CTkFrame(scroll_box, corner_radius=10, fg_color=("#F8FAFC", "#171005"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"))
+        card_work.pack(fill="x", pady=6, padx=5)
+        ctk.CTkLabel(card_work, text="⚖️ قواعد احتساب الأجر وساعات العمل", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"), text_color="#F59E0B").pack(anchor="e", padx=12, pady=(10, 4))
+
+        r4 = ctk.CTkFrame(card_work, fg_color="transparent")
+        r4.pack(fill="x", padx=12, pady=4)
+        ctk.CTkLabel(r4, text="أساس أيام الشهر لاحتساب أجر اليوم:", width=220, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
+        entry_month_days = ctk.CTkEntry(r4, width=80, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
+        entry_month_days.insert(0, str(hr_cfg.get("month_days_basis", 30.0)))
+        entry_month_days.pack(side="right", padx=5)
+        ctk.CTkLabel(r4, text="يوماً (الافتراضي المعتمد 30 يوماً)", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
+
+        r5 = ctk.CTkFrame(card_work, fg_color="transparent")
+        r5.pack(fill="x", padx=12, pady=4)
+        ctk.CTkLabel(r5, text="ساعات العمل اليومية الرسمية:", width=220, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
+        entry_shift_h = ctk.CTkEntry(r5, width=80, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
+        entry_shift_h.insert(0, str(hr_cfg.get("shift_hours", 7.0)))
+        entry_shift_h.pack(side="right", padx=5)
+        ctk.CTkLabel(r5, text="ساعات لاحتساب أجر الساعة", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
+
+        r6 = ctk.CTkFrame(card_work, fg_color="transparent")
+        r6.pack(fill="x", padx=12, pady=(4, 10))
+        ctk.CTkLabel(r6, text="معامل أجر الساعات الإضافية:", width=220, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12)).pack(side="right", padx=5)
+        entry_ot_mult = ctk.CTkEntry(r6, width=80, fg_color=("#FFFFFF", "#1F160A"), border_color=("#CBD5E1", "#3D2A0E"), text_color=("#0F172A", "#FFFBEB"))
+        entry_ot_mult.insert(0, str(hr_cfg.get("overtime_multiplier", 1.5)))
+        entry_ot_mult.pack(side="right", padx=5)
+        ctk.CTkLabel(r6, text="(مثلاً 1.5 = ساعة ونصف)", font=ctk.CTkFont(size=10), text_color="#94A3B8").pack(side="right")
+
+        # ==================== كرت 4: اللائحة التنظيمية المعتمدة (الاستئذان والإجازات والتأخير) ====================
+        card_rules = ctk.CTkFrame(scroll_box, corner_radius=10, fg_color=("#F8FAFC", "#171005"), border_width=1, border_color=("#CBD5E1", "#D97706"))
+        card_rules.pack(fill="x", pady=6, padx=5)
+
+        ctk.CTkLabel(card_rules, text="📜 اللائحة التنظيمية المعتمدة للحضور والغياب", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"), text_color="#F59E0B").pack(anchor="e", padx=12, pady=(10, 4))
+
+        rules_items = [
+            ("1️⃣ رصيد ساعات الاستئذان:", "الموظف له 4 ساعات إذن شهرياً، يتم ترحيل وتجميع دقائق التأخير بعد فترة السماح فيها، وتجاوزها يخصم يوم كامل."),
+            ("2️⃣ إجازة الشهر المعفية:", "الموظف له يوم واحد إجازة شهرياً مدفوعة بالكامل ولا تخصم من الراتب نهائياً."),
+            ("3️⃣ رصيد الإجازات السنوية:", "إجمالي 21 يوماً إجازة سنوية مقسمة على شهور السنة (لا يجوز أخذها كاملة في شهر واحد)."),
+            ("4️⃣ سماح الحضور وترحيل التأخير:", "فترة سماح 30 دقيقة من موعد الموظف، وأي تأخير بعدها يُرحل ويُجمع في رصيد الاستئذان الشهري."),
+            ("5️⃣ التأخير الشديد (> ساعة ونصف):", "التأخير لأكثر من 1.5 ساعة (90 دقيقة) من موعد الموظف يعتبر تأخيراً جسيماً ويخصم يوم كامل مباشرة.")
+        ]
+
+        for title, desc in rules_items:
+            r_box = ctk.CTkFrame(card_rules, fg_color=("#F1F5F9", "#1F160A"), corner_radius=6)
+            r_box.pack(fill="x", padx=10, pady=3)
+            ctk.CTkLabel(r_box, text=title, font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"), text_color="#10B981").pack(anchor="e", padx=8, pady=(4, 1))
+            ctk.CTkLabel(r_box, text=desc, font=ctk.CTkFont(family="Segoe UI", size=10), text_color=("#475569", "#D1A562"), wraplength=480, justify="right").pack(anchor="e", padx=8, pady=(1, 4))
+
+        # أزرار الحفظ والإلغاء
         btn_box = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_box.pack(fill="x", padx=25, pady=(5, 20))
+        btn_box.pack(fill="x", padx=25, pady=(8, 18))
 
         def on_save_policies():
             try:
-                abs_m = float(entry_abs_mult.get().strip())
-                late_m = float(entry_late_mult.get().strip())
-                m_days = float(entry_month_days.get().strip())
-                s_hours = float(entry_shift_h.get().strip())
-                ot_m = float(entry_ot_mult.get().strip())
+                abs_on = var_abs_enabled.get()
+                abs_m = float(entry_abs_mult.get().strip() or "1.0")
+                late_m = float(entry_late_mult.get().strip() or "1.0")
+                m_days = float(entry_month_days.get().strip() or "30.0")
+                s_hours = float(entry_shift_h.get().strip() or "7.0")
+                ot_m = float(entry_ot_mult.get().strip() or "1.5")
                 l_type = "tiers" if "شرائح" in combo_late_type.get() else "minutes"
 
+                if m_days <= 0:
+                    m_days = 30.0
+                if s_hours <= 0:
+                    s_hours = 7.0
+
                 new_settings = {
-                    "absence_penalty_multiplier": abs_m,
-                    "late_deduction_type": l_type,
-                    "late_minute_multiplier": late_m,
+                    "absence_deduction_enabled": abs_on,
+                    "absence_penalty_multiplier": abs_m if abs_on else 0.0,
                     "month_days_basis": m_days,
                     "shift_hours": s_hours,
+                    "late_deduction_type": l_type,
+                    "late_minute_multiplier": late_m,
                     "overtime_multiplier": ot_m,
                     "early_leave_deduction": var_early_ded.get()
                 }
                 self.engine.save_hr_settings(new_settings)
                 dialog.destroy()
                 self.update_hr_view()
-                messagebox.showinfo("تم الحفظ", "تم تحديث سياسات الرواتب وإعادة حساب المسير بنجاح.")
+                messagebox.showinfo("تم الحفظ", "تم تحديث قواعد وسياسات الرواتب وإعادة احتساب المسير بنجاح.")
             except ValueError:
                 messagebox.showerror("خطأ", "يرجى التأكد من كتابة الأرقام بشكل صحيح.")
 
-        btn_save = ctk.CTkButton(btn_box, text="حفظ السياسات وإعادة الحساب 💾", command=on_save_policies, fg_color="#D97706", hover_color="#B45309", width=200, height=36, font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"))
+        btn_save = ctk.CTkButton(
+            btn_box,
+            text="حفظ السياسات وإعادة الاحتساب 💾",
+            command=on_save_policies,
+            fg_color="#D97706",
+            hover_color="#B45309",
+            width=220,
+            height=38,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
         btn_save.pack(side="right", padx=5)
 
-        btn_cancel = ctk.CTkButton(btn_box, text="إلغاء", command=dialog.destroy, fg_color=("#94A3B8", "#241808"), hover_color=("#64748B", "#3D2A0E"), text_color=("#0F172A", "#FEF3C7"), border_width=1, border_color=("#CBD5E1", "#3D2A0E"), width=90, height=36)
+        btn_cancel = ctk.CTkButton(
+            btn_box,
+            text="إلغاء",
+            command=dialog.destroy,
+            fg_color=("#94A3B8", "#241808"),
+            hover_color=("#64748B", "#3D2A0E"),
+            text_color=("#0F172A", "#FEF3C7"),
+            border_width=1,
+            border_color=("#CBD5E1", "#3D2A0E"),
+            width=90,
+            height=38
+        )
         btn_cancel.pack(side="left", padx=5)
 
     def export_payroll_excel(self):
@@ -1525,7 +2059,7 @@ class AttendanceApp(ctk.CTk):
         )
         self.chk_auto_hire.pack(side="right", padx=10)
 
-        # 7. قسم خاص: إجازات موظفي المبيعات والورديات الخاصة
+        # 7. قسم خاص: تخصيص مواعيد العمل (الورديات) والإجازات الأسبوعية لكل موظف
         emp_wk_card = ctk.CTkFrame(
             settings_box,
             fg_color=("#F8FAFC", "#1F160A"),
@@ -1539,17 +2073,18 @@ class AttendanceApp(ctk.CTk):
         wk_title_row.pack(fill="x", padx=15, pady=(10, 4))
         ctk.CTkLabel(
             wk_title_row,
-            text="🏖️ إجازات موظفي المبيعات والورديات الخاصة (أيام الراحة الأسبوعية لكل موظف)",
+            text="⏰ تخصيص مواعيد العمل (الورديات) والإجازات الأسبوعية لكل موظف",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
             text_color="#F59E0B"
         ).pack(side="right")
         ctk.CTkLabel(
             wk_title_row,
-            text="اختر الموظف وحدد أيام إجازته في الأسبوع (سيتم استثناؤه تلقائياً من الغياب في هذه الأيام)",
+            text="تحديد ميعاد الحضور والانصراف وأيام الإجازة لكل موظف على حدة لحساب التأخير والغياب بدقة",
             font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color=("#64748B", "#FEF3C7")
         ).pack(side="left")
 
+        # صف اختيار الموظف ومواعيد الوردية الخاصة
         wk_ctrl_row = ctk.CTkFrame(emp_wk_card, fg_color="transparent")
         wk_ctrl_row.pack(fill="x", padx=15, pady=6)
 
@@ -1557,7 +2092,34 @@ class AttendanceApp(ctk.CTk):
 
         emp_choices = [f"{e['enno']} - {e['name']}" for e in sorted(self.engine.employees.values(), key=lambda x: x['enno'])] if self.engine.employees else ["-- لا توجد بيانات موظفين --"]
         self.combo_emp_weekend = ctk.CTkComboBox(wk_ctrl_row, values=emp_choices, width=220)
-        self.combo_emp_weekend.pack(side="right", padx=10)
+        self.combo_emp_weekend.pack(side="right", padx=(5, 20))
+
+        # حقول مواعيد الوردية المخصصة للموظف
+        ctk.CTkLabel(wk_ctrl_row, text="ميعاد الحضور (بدء العمل):", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")).pack(side="right", padx=(5, 2))
+        self.entry_emp_shift_start = ctk.CTkEntry(
+            wk_ctrl_row,
+            width=80,
+            height=30,
+            fg_color=("#FFFFFF", "#1F160A"),
+            border_color=("#CBD5E1", "#3D2A0E"),
+            text_color=("#0F172A", "#FFFBEB"),
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
+        self.entry_emp_shift_start.insert(0, self.engine.config.get("shift_start", "11:00"))
+        self.entry_emp_shift_start.pack(side="right", padx=(0, 15))
+
+        ctk.CTkLabel(wk_ctrl_row, text="ميعاد الانصراف (نهاية العمل):", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")).pack(side="right", padx=(5, 2))
+        self.entry_emp_shift_end = ctk.CTkEntry(
+            wk_ctrl_row,
+            width=80,
+            height=30,
+            fg_color=("#FFFFFF", "#1F160A"),
+            border_color=("#CBD5E1", "#3D2A0E"),
+            text_color=("#0F172A", "#FFFBEB"),
+            font=ctk.CTkFont(family="Segoe UI", size=12)
+        )
+        self.entry_emp_shift_end.insert(0, self.engine.config.get("shift_end", "19:00"))
+        self.entry_emp_shift_end.pack(side="right", padx=(0, 10))
 
         # مصفوفة أيام الأسبوع
         # 0=الإثنين, 1=الثلاثاء, 2=الأربعاء, 3=الخميس, 4=الجمعة, 5=السبت, 6=الأحد
@@ -1572,7 +2134,7 @@ class AttendanceApp(ctk.CTk):
         ]
         self.emp_wk_vars = {}
         days_box = ctk.CTkFrame(emp_wk_card, fg_color="transparent")
-        days_box.pack(fill="x", padx=15, pady=(2, 10))
+        days_box.pack(fill="x", padx=15, pady=(4, 6))
 
         ctk.CTkLabel(days_box, text="أيام الإجازة الأسبوعية:", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).pack(side="right", padx=(5, 10))
 
@@ -1588,12 +2150,22 @@ class AttendanceApp(ctk.CTk):
                 assigned_days = self.engine.get_employee_weekend_days(enno_sel)
                 for d_num, v in self.emp_wk_vars.items():
                     v.set(d_num in assigned_days)
+                
+                _, _, s_start, s_end = self.engine.get_employee_shift(enno_sel)
+                self.entry_emp_shift_start.delete(0, "end")
+                self.entry_emp_shift_start.insert(0, s_start)
+                self.entry_emp_shift_end.delete(0, "end")
+                self.entry_emp_shift_end.insert(0, s_end)
             except Exception:
                 pass
 
         self.combo_emp_weekend.configure(command=on_emp_weekend_selected)
 
-        # زر حفظ إجازة الموظف
+        # صف أزرار الحفظ والاستعادة
+        btn_action_box = ctk.CTkFrame(emp_wk_card, fg_color="transparent")
+        btn_action_box.pack(fill="x", padx=15, pady=(2, 10))
+
+        # زر حفظ ميعاد وإجازة الموظف
         def save_selected_emp_weekend():
             try:
                 val = self.combo_emp_weekend.get()
@@ -1601,58 +2173,79 @@ class AttendanceApp(ctk.CTk):
                     messagebox.showwarning("تنبيه", "يرجى اختيار موظف أولاً.")
                     return
                 enno_sel = int(val.split(" - ")[0])
+                s_start = self.entry_emp_shift_start.get().strip()
+                s_end = self.entry_emp_shift_end.get().strip()
+
+                try:
+                    self.engine.parse_time_str(s_start)
+                    self.engine.parse_time_str(s_end)
+                except Exception:
+                    messagebox.showerror("خطأ", "يرجى كتابة مواعيد الوردية بصيغة صحيحة (مثال: 09:00 أو 17:00).")
+                    return
+
                 sel_days = [d_num for d_num, v in self.emp_wk_vars.items() if v.get()]
+                self.engine.set_employee_shift(enno_sel, s_start, s_end)
                 self.engine.set_employee_weekend_days(enno_sel, sel_days)
                 self.update_daily_view()
                 self.update_period_view()
-                messagebox.showinfo("تم الحفظ", f"تم حفظ أيام الإجازة الأسبوعية للموظف [{val}] وتحديث التقارير بنجاح!")
+                messagebox.showinfo("تم الحفظ", f"تم حفظ ميعاد العمل ({s_start} إلى {s_end}) وأيام الإجازة للموظف [{val}] وتحديث التقارير بنجاح!")
             except Exception as e:
-                messagebox.showerror("خطأ", f"حدث خطأ أثناء حفظ أيام الإجازة:\n{e}")
+                messagebox.showerror("خطأ", f"حدث خطأ أثناء حفظ الإعدادات:\n{e}")
 
-        # زر إعادة الموظف للعطلة العامة
+        # زر استعادة المواعيد والعطلة العامة
         def reset_selected_emp_weekend():
             try:
                 val = self.combo_emp_weekend.get()
                 if " - " not in val:
                     return
                 enno_sel = int(val.split(" - ")[0])
+                self.engine.set_employee_shift(enno_sel, None, None)
                 self.engine.set_employee_weekend_days(enno_sel, None)
+                
                 # استعادة الأيام الافتراضية
                 gen_days = self.engine.config.get("weekend_days", [4, 5])
                 for d_num, v in self.emp_wk_vars.items():
                     v.set(d_num in gen_days)
+
+                def_start = self.engine.config.get("shift_start", "11:00")
+                def_end = self.engine.config.get("shift_end", "19:00")
+                self.entry_emp_shift_start.delete(0, "end")
+                self.entry_emp_shift_start.insert(0, def_start)
+                self.entry_emp_shift_end.delete(0, "end")
+                self.entry_emp_shift_end.insert(0, def_end)
+
                 self.update_daily_view()
                 self.update_period_view()
-                messagebox.showinfo("تم الاسترجاع", f"تمت استعادة العطلة الأسبوعية العامة للموظف [{val}] بنجاح.")
+                messagebox.showinfo("تم الاسترجاع", f"تمت استعادة المواعيد والإجازات العامة للموظف [{val}] بنجاح.")
             except Exception as e:
                 messagebox.showerror("خطأ", str(e))
 
         btn_save_emp_wk = ctk.CTkButton(
-            days_box,
-            text="الموظف هذا إجازة حفظ 💾",
+            btn_action_box,
+            text="💾 حفظ ميعاد وإجازة الموظف",
             command=save_selected_emp_weekend,
             fg_color="#D97706",
             hover_color="#B45309",
-            width=160,
-            height=30,
-            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")
+            width=180,
+            height=32,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
         )
-        btn_save_emp_wk.pack(side="left", padx=5)
+        btn_save_emp_wk.pack(side="right", padx=5)
 
         btn_reset_emp_wk = ctk.CTkButton(
-            days_box,
-            text="العامة العطلة استعادة 🔄",
+            btn_action_box,
+            text="🔄 استعادة الإعدادات العامة للموظف",
             command=reset_selected_emp_weekend,
             fg_color=("#94A3B8", "#241808"),
             hover_color=("#64748B", "#3D2A0E"),
             text_color=("#0F172A", "#FEF3C7"),
             border_width=1,
             border_color=("#CBD5E1", "#3D2A0E"),
-            width=140,
-            height=30,
-            font=ctk.CTkFont(family="Segoe UI", size=11)
+            width=180,
+            height=32,
+            font=ctk.CTkFont(family="Segoe UI", size=12)
         )
-        btn_reset_emp_wk.pack(side="left", padx=5)
+        btn_reset_emp_wk.pack(side="right", padx=5)
 
         # تهيئة الاختيار الأولي لموظف الإجازات
         if emp_choices and " - " in emp_choices[0]:
