@@ -47,6 +47,9 @@ class AttendanceApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
+        # فرض فتح البرنامج على وضع النايت مود (Dark / Amber Night Mode) دائماً
+        ctk.set_appearance_mode("Dark")
+
         # إعدادات النافذة الرئيسية مع دعم العمل على أي شاشة ومقاس
         self.title("BioTorg Pro - نظام الحضور والانصراف ومسير الرواتب الذكي")
         self.geometry("1240x800")
@@ -1746,11 +1749,12 @@ class AttendanceApp(ctk.CTk):
         r2 = ctk.CTkFrame(card_late, fg_color="transparent")
         r2.pack(fill="x", padx=12, pady=4)
         ctk.CTkLabel(r2, text="طريقة احتساب خصم التأخير:", width=180, anchor="e", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")).pack(side="right", padx=5)
-        combo_late_type = ctk.CTkComboBox(r2, values=["حساب بالدقائق (دقيقة بدقيقة)", "نظام شرائح التأخير اليومية"], width=200)
+        # ترتيب الكلمات معكوس برمجياً لتظهر في واجهة CustomTkinter بالترتيب العربي الطبيعي السليم
+        combo_late_type = ctk.CTkComboBox(r2, values=["(دقيقة بدقيقة) بالدقائق حساب", "اليومية التأخير شرائح نظام"], width=220)
         if hr_cfg.get("late_deduction_type") == "tiers":
-            combo_late_type.set("نظام شرائح التأخير اليومية")
+            combo_late_type.set("اليومية التأخير شرائح نظام")
         else:
-            combo_late_type.set("حساب بالدقائق (دقيقة بدقيقة)")
+            combo_late_type.set("(دقيقة بدقيقة) بالدقائق حساب")
         combo_late_type.pack(side="right", padx=5)
 
         r3 = ctk.CTkFrame(card_late, fg_color="transparent")
@@ -2054,18 +2058,19 @@ class AttendanceApp(ctk.CTk):
         row5.pack(fill="x", padx=30, pady=6)
         lbl5 = ctk.CTkLabel(row5, text="العطلة الأسبوعية العامة (الافتراضية):", font=ctk.CTkFont(family="Segoe UI", size=13), width=230, anchor="e")
         lbl5.pack(side="right", padx=10)
+        # ترتيب الكلمات معكوس برمجياً لتظهر في واجهة CustomTkinter بالترتيب العربي الطبيعي السليم
         self.combo_weekend = ctk.CTkComboBox(
             row5,
-            values=["الجمعة فقط", "الجمعة والسبت", "بدون عطلة"],
-            width=150
+            values=["فقط الجمعة", "والسبت الجمعة", "عطلة بدون"],
+            width=160
         )
         current_wk = cfg.get("weekend_days", [4])
         if current_wk == [4, 5]:
-            self.combo_weekend.set("الجمعة والسبت")
+            self.combo_weekend.set("والسبت الجمعة")
         elif not current_wk:
-            self.combo_weekend.set("بدون عطلة")
+            self.combo_weekend.set("عطلة بدون")
         else:
-            self.combo_weekend.set("الجمعة فقط")
+            self.combo_weekend.set("فقط الجمعة")
         self.combo_weekend.pack(side="right", padx=10)
         ctk.CTkLabel(row5, text="تطبق تلقائياً على كل الموظفين ما لم يُحدد لهم أيام إجازة خاصة أدناه", text_color=("#64748B", "#D1A562")).pack(side="right")
 
@@ -3495,14 +3500,7 @@ class AttendanceApp(ctk.CTk):
         # التواريخ
         date_strings = [d.strftime("%Y-%m-%d") for d in self.engine.available_dates] if self.engine.available_dates else []
 
-        lbl_to = ctk.CTkLabel(r_box, text="إلى:", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"))
-        lbl_to.pack(side="right", padx=(8, 2))
-
-        combo_l_to = ctk.CTkComboBox(r_box, values=date_strings, width=110)
-        if date_strings:
-            combo_l_to.set(date_strings[0])
-        combo_l_to.pack(side="right", padx=3)
-
+        # التواريخ - الترتيب الطبيعي من اليمين لليسار (من: أولاً ثم إلى:)
         lbl_from = ctk.CTkLabel(r_box, text="من:", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"))
         lbl_from.pack(side="right", padx=(8, 2))
 
@@ -3510,6 +3508,14 @@ class AttendanceApp(ctk.CTk):
         if date_strings:
             combo_l_from.set(date_strings[-1])
         combo_l_from.pack(side="right", padx=3)
+
+        lbl_to = ctk.CTkLabel(r_box, text="إلى:", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"))
+        lbl_to.pack(side="right", padx=(8, 2))
+
+        combo_l_to = ctk.CTkComboBox(r_box, values=date_strings, width=110)
+        if date_strings:
+            combo_l_to.set(date_strings[0])
+        combo_l_to.pack(side="right", padx=3)
 
         # الجانب الأيسر: أزرار التحديث والتصدير
         l_box = ctk.CTkFrame(ctrl_frame, fg_color="transparent")
@@ -3929,9 +3935,9 @@ class AttendanceApp(ctk.CTk):
             datetime.datetime.strptime(start_s, "%H:%M")
             datetime.datetime.strptime(end_s, "%H:%M")
 
-            if wk_choice == "الجمعة والسبت":
+            if "السبت" in wk_choice:
                 wk_days = [4, 5]
-            elif wk_choice == "الجمعة فقط":
+            elif "فقط" in wk_choice or ("الجمعة" in wk_choice and "بدون" not in wk_choice):
                 wk_days = [4]
             else:
                 wk_days = []
