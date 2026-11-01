@@ -127,7 +127,7 @@ class AttendanceApp(ctk.CTk):
 
         app_title = ctk.CTkLabel(
             title_box,
-            text="BioTorg Pro v2.3.2",
+            text="BioTorg Pro v2.3.3",
             font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
             text_color="#F59E0B"
         )
@@ -135,7 +135,7 @@ class AttendanceApp(ctk.CTk):
 
         app_subtitle = ctk.CTkLabel(
             title_box,
-            text="نظام الحضور والانصراف ومسير الرواتب الذكي (تحديث تجريبي 🚀)",
+            text="نظام الحضور والانصراف ومسير الرواتب الذكي (تحديث تلقائي ذكي في الخلفية ⚡)",
             font=ctk.CTkFont(family="Segoe UI", size=10),
             text_color=("#64748B", "#D1A562")
         )
@@ -2868,6 +2868,9 @@ class AttendanceApp(ctk.CTk):
         if not updater:
             return
         try:
+            # تسجيل مهمة التحديث التلقائي في ويندوز حتى يعمل التحديث والبرنامج مغلق تماماً
+            updater.register_windows_scheduled_task()
+
             # 1. إظهار نافذة 'ما الجديد' إذا تم تثبيت تحديث مؤخراً
             updater.check_and_show_whats_new(self)
 
@@ -4010,5 +4013,14 @@ class AttendanceApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    # إذا تم الاستدعاء عبر مهمة مجدولة في ويندوز لفحص التحديثات في الخلفية
+    if "--background-check" in sys.argv:
+        try:
+            if updater:
+                updater.run_background_updater_headless()
+        except Exception:
+            pass
+        sys.exit(0)
+
     app = AttendanceApp()
     app.mainloop()

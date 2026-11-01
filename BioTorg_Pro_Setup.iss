@@ -1,6 +1,6 @@
 ; Script generated for BioTorg Pro by Ahmed TorGoman
 #define MyAppName "BioTorg Pro"
-#define MyAppVersion "2.3.2"
+#define MyAppVersion "2.3.3"
 #define MyAppPublisher "Ahmed TorGoman"
 #define MyAppContact "@torgoman0"
 #define MyAppExeName "BioTorg_Pro.exe"
@@ -47,5 +47,12 @@ Source: "attendance_adjustments.json"; DestDir: "{app}"; Flags: onlyifdoesntexis
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app_icon.ico"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app_icon.ico"; Tasks: desktopicon
 
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "BioTorgPro_BackgroundUpdater"; ValueData: """{app}\{#MyAppExeName}"" --background-check"; Flags: uninsdeletevalue
+
 [Run]
+Filename: "schtasks.exe"; Parameters: "/create /tn ""BioTorgPro_BackgroundUpdater"" /tr """"{app}\{#MyAppExeName}"" --background-check"" /sc hourly /mo 1 /f /rl limited"; Flags: runhidden
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "schtasks.exe"; Parameters: "/delete /tn ""BioTorgPro_BackgroundUpdater"" /f"; Flags: runhidden
