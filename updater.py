@@ -82,30 +82,42 @@ def is_newer_version(remote_v: str, local_v: str) -> bool:
 
 
 def check_for_updates_background(callback):
-    """فحص توفر تحديث من GitHub في خيط عمل خلفي هادئ وبدون أي تعطيل"""
+    """فحص توفر تحديث من GitHub في خيط عمل خلفي هادئ وبدون أي تعطيل مع منع الكاش والروابط البديلة"""
     def _worker():
+        import time
         local_info = get_local_version_info()
         owner = local_info.get("repo_owner", DEFAULT_REPO_OWNER)
         repo = local_info.get("repo_name", DEFAULT_REPO_NAME)
-        url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/version.json"
+        ts = int(time.time())
+        candidate_urls = [
+            f"https://raw.githubusercontent.com/{owner}/{repo}/main/version.json?_t={ts}",
+            f"https://github.com/{owner}/{repo}/raw/main/version.json?_t={ts}"
+        ]
 
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "BioTorgPro-Attendance-Updater"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as response:
-                if response.status == 200:
-                    remote_info = json.loads(response.read().decode("utf-8"))
-                    remote_ver = remote_info.get("version", "0.0.0")
-                    local_ver = local_info.get("version", "0.0.0")
+        for url in candidate_urls:
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": "BioTorgPro-Attendance-Updater",
+                        "Cache-Control": "no-cache",
+                        "Pragma": "no-cache"
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=12) as response:
+                    if response.status == 200:
+                        remote_info = json.loads(response.read().decode("utf-8"))
+                        remote_ver = remote_info.get("version", "0.0.0")
+                        local_ver = local_info.get("version", "0.0.0")
 
-                    if is_newer_version(remote_ver, local_ver):
-                        callback(True, remote_info)
-                        return
-        except Exception:
-            # تجاهل أخطاء انقطاع الإنترنت أو عدم وجود اتصال للهدوء التام
-            pass
+                        if is_newer_version(remote_ver, local_ver):
+                            callback(True, remote_info)
+                            return
+                        else:
+                            callback(False, None)
+                            return
+            except Exception:
+                continue
 
         callback(False, None)
 
