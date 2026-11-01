@@ -127,7 +127,7 @@ class AttendanceApp(ctk.CTk):
 
         app_title = ctk.CTkLabel(
             title_box,
-            text="BioTorg Pro",
+            text="BioTorg Pro v2.3.2",
             font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
             text_color="#F59E0B"
         )
@@ -135,7 +135,7 @@ class AttendanceApp(ctk.CTk):
 
         app_subtitle = ctk.CTkLabel(
             title_box,
-            text="نظام الحضور والانصراف ومسير الرواتب الذكي",
+            text="نظام الحضور والانصراف ومسير الرواتب الذكي (تحديث تجريبي 🚀)",
             font=ctk.CTkFont(family="Segoe UI", size=10),
             text_color=("#64748B", "#D1A562")
         )
