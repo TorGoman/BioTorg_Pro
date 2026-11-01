@@ -2868,9 +2868,6 @@ class AttendanceApp(ctk.CTk):
         if not updater:
             return
         try:
-            # تسجيل مهمة التحديث التلقائي في ويندوز حتى يعمل التحديث والبرنامج مغلق تماماً
-            updater.register_windows_scheduled_task()
-
             # 1. إظهار نافذة 'ما الجديد' إذا تم تثبيت تحديث مؤخراً
             updater.check_and_show_whats_new(self)
 
@@ -4013,14 +4010,5 @@ class AttendanceApp(ctk.CTk):
 
 
 if __name__ == "__main__":
-    # إذا تم الاستدعاء عبر مهمة مجدولة في ويندوز لفحص التحديثات في الخلفية
-    if "--background-check" in sys.argv:
-        try:
-            if updater:
-                updater.run_background_updater_headless()
-        except Exception:
-            pass
-        sys.exit(0)
-
     app = AttendanceApp()
     app.mainloop()

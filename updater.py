@@ -185,12 +185,10 @@ def download_and_install_update(remote_info: Dict[str, Any], progress_callback=N
                     if progress_callback:
                         progress_callback("جاري تشغيل مثبت التحديث وإعادة التشغيل...")
 
-                    app_exe = sys.executable
-                    bat_path = os.path.join(TEMP_UPDATE_DIR, "apply_installer.bat")
-                    with open(bat_path, "w", encoding="utf-8") as f:
-                        f.write(f'@echo off\ntimeout /t 2 /nobreak > nul\nstart /wait "" "{inst_dest}" /SILENT /CLOSEAPPLICATIONS\ntimeout /t 1 /nobreak > nul\nif exist "{app_exe}" (\n    start "" "{app_exe}"\n)\ndel "%~f0"\n')
-
-                    subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                    if os.name == 'nt':
+                        os.startfile(inst_dest)
+                    else:
+                        subprocess.Popen([inst_dest])
                     sys.exit(0)
 
                 elif exe_download_url:
@@ -536,129 +534,7 @@ def check_and_show_whats_new(parent_window):
             local_info = get_local_version_info()
             changelog = local_info.get("changelog", [])
 
+
         WhatsNewDialog(parent_window, version, changelog)
 
-
-def register_windows_scheduled_task():
-    """تسجيل مهمة مجدولة في ويندوز لفحص التحديثات دورياً في الخلفية حتى والبرنامج مغلق تماماً"""
-    if os.name != 'nt':
-        return
-    try:
-        app_exe = sys.executable
-        if getattr(sys, 'frozen', False):
-            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-            # 1. مهمة مجدولة تعمل في الخلفية كل ساعة بصمت
-            cmd_task = [
-                "schtasks", "/create",
-                "/tn", "BioTorgPro_BackgroundUpdater",
-                "/tr", f'"{app_exe}" --background-check',
-                "/sc", "HOURLY",
-                "/mo", "1",
-                "/f",
-                "/rl", "LIMITED"
-            ]
-            subprocess.run(cmd_task, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
-
-            # 2. فحص تلقائي صامت عند بدء تشغيل ويندوز (Startup)
-            try:
-                import winreg
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
-                winreg.SetValueEx(key, "BioTorgPro_BackgroundUpdater", 0, winreg.REG_SZ, f'"{app_exe}" --background-check')
-                winreg.CloseKey(key)
-            except Exception:
-                pass
-    except Exception as e:
-        print("Error registering background updater task:", e)
-
-
-def run_background_updater_headless():
-    """فحص التحديثات وتنزيلها وتثبيتها بالكامل في صمت وهدوء تام حتى والبرنامج غير مفتوح على أي جهاز"""
-    import time
-    try:
-        local_info = get_local_version_info()
-        local_v = local_info.get("version", "2.3.0")
-        owner = local_info.get("repo_owner", DEFAULT_REPO_OWNER)
-        repo = local_info.get("repo_name", DEFAULT_REPO_NAME)
-        ts = int(time.time())
-
-        candidate_urls = [
-            f"https://raw.githubusercontent.com/{owner}/{repo}/main/version.json?_t={ts}",
-            f"https://github.com/{owner}/{repo}/raw/main/version.json?_t={ts}"
-        ]
-
-        remote_info = None
-        for url in candidate_urls:
-            try:
-                req = urllib.request.Request(
-                    url,
-                    headers={"User-Agent": "BioTorgPro-BgUpdater", "Cache-Control": "no-cache"}
-                )
-                with urllib.request.urlopen(req, timeout=25) as resp:
-                    if resp.status == 200:
-                        data = resp.read().decode("utf-8")
-                        remote_info = json.loads(data)
-                        break
-            except Exception:
-                continue
-
-        if not remote_info:
-            return False
-
-        remote_v = remote_info.get("version", "")
-        if not is_newer_version(remote_v, local_v):
-            return False
-
-        # يوجد إصدار أحدث! نقوم بتنزيل مثبت التحديث فوراً
-        inst_url = remote_info.get("installer_url") or f"https://github.com/{owner}/{repo}/raw/main/BioTorg_Pro_Setup_v{remote_v}.exe"
-        os.makedirs(TEMP_UPDATE_DIR, exist_ok=True)
-        inst_dest = os.path.join(TEMP_UPDATE_DIR, f"BioTorg_Pro_Setup_v{remote_v}.exe")
-
-        req = urllib.request.Request(inst_url, headers={"User-Agent": "BioTorgPro-BgUpdater"})
-        with urllib.request.urlopen(req, timeout=300) as resp, open(inst_dest, "wb") as f_out:
-            shutil.copyfileobj(resp, f_out)
-
-        if not (os.path.exists(inst_dest) and os.path.getsize(inst_dest) > 1000000):
-            return False
-
-        # حفظ الحالة ليعلم البرنامج أنه تم تحديثه ويعرض نافذة ما الجديد عند فتحه
-        state = {
-            "last_seen_version": remote_v,
-            "pending_changelog": True,
-            "changelog": remote_info.get("changelog", [])
-        }
-        save_updater_state(state)
-
-        # التحقق هل واجهة البرنامج مفتوحة حالياً؟
-        is_gui_running = False
-        if getattr(sys, 'frozen', False):
-            try:
-                creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                out = subprocess.check_output(
-                    ["tasklist", "/FI", "IMAGENAME eq BioTorg_Pro.exe", "/FO", "CSV", "/NH"],
-                    creationflags=creationflags
-                ).decode("utf-8", errors="ignore")
-                lines = [line for line in out.strip().split("\n") if "BioTorg_Pro.exe" in line]
-                if len(lines) > 1:
-                    is_gui_running = True
-            except Exception:
-                pass
-
-        # تشغيل مثبت التحديث بهدوء تام
-        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-        if not is_gui_running:
-            # البرنامج غير مفتوح: نثبت التحديث بصمت كامل وفوري بدون إظهار أي نوافذ
-            subprocess.Popen(
-                [inst_dest, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-                creationflags=creationflags
-            )
-        else:
-            # البرنامج مفتوح حالياً: نحدثه بهدوء مع إعادة التشغيل التلقائي
-            subprocess.Popen(
-                [inst_dest, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
-                creationflags=creationflags
-            )
-        return True
-    except Exception as e:
-        print("Background updater headless error:", e)
-        return False
 
