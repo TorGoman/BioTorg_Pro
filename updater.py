@@ -173,26 +173,25 @@ def download_and_install_update(remote_info: Dict[str, Any], progress_callback=N
                         last_err = err
                         continue
 
-                if not downloaded:
-                    raise Exception(f"{last_err or 'تعذر تنزيل ملف التثبيت'}")
+                if downloaded:
+                    # تسجيل الحالة وتشغيل المثبت بعد اكتمال التنزيل بنجاح
+                    state = {
+                        "last_seen_version": remote_info.get("version", "2.3.0"),
+                        "pending_changelog": True,
+                        "changelog": remote_info.get("changelog", [])
+                    }
+                    save_updater_state(state)
 
-                # تسجيل الحالة وتشغيل المثبت بعد اكتمال التنزيل بنجاح
-                state = {
-                    "last_seen_version": remote_info.get("version", "2.3.0"),
-                    "pending_changelog": True,
-                    "changelog": remote_info.get("changelog", [])
-                }
-                save_updater_state(state)
+                    if progress_callback:
+                        progress_callback("جاري تشغيل مثبت التحديث وإعادة التشغيل...")
 
-                if progress_callback:
-                    progress_callback("جاري تشغيل مثبت التحديث وإعادة التشغيل...")
+                    app_exe = sys.executable
+                    bat_path = os.path.join(TEMP_UPDATE_DIR, "apply_installer.bat")
+                    with open(bat_path, "w", encoding="utf-8") as f:
+                        f.write(f'@echo off\ntimeout /t 2 /nobreak > nul\nstart /wait "" "{inst_dest}" /SILENT /CLOSEAPPLICATIONS\ntimeout /t 1 /nobreak > nul\nif exist "{app_exe}" (\n    start "" "{app_exe}"\n)\ndel "%~f0"\n')
 
-                bat_path = os.path.join(TEMP_UPDATE_DIR, "apply_installer.bat")
-                with open(bat_path, "w", encoding="utf-8") as f:
-                    f.write(f'@echo off\ntimeout /t 2 /nobreak > nul\nstart "" "{inst_dest}" /SILENT /CLOSEAPPLICATIONS\ndel "%~f0"\n')
-
-                subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                sys.exit(0)
+                    subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                    sys.exit(0)
 
                 elif exe_download_url:
                     if progress_callback:
@@ -213,7 +212,7 @@ def download_and_install_update(remote_info: Dict[str, Any], progress_callback=N
                     source_dir = subfolders[0] if subfolders else extract_dest
 
                     state = {
-                        "last_seen_version": remote_info.get("version", "2.2.0"),
+                        "last_seen_version": remote_info.get("version", "2.3.0"),
                         "pending_changelog": True,
                         "changelog": remote_info.get("changelog", [])
                     }
@@ -227,7 +226,8 @@ def download_and_install_update(remote_info: Dict[str, Any], progress_callback=N
                     sys.exit(0)
 
                 else:
-                    # في حال كان EXE ولم يرفع المطور ملفات release ثنائية بعد، نفتح صفحة GitHub
+                    if last_err:
+                        raise Exception(f"{last_err}")
                     if progress_callback:
                         progress_callback("جاري فتح صفحة التحديثات على GitHub...")
                     webbrowser.open(f"https://github.com/{owner}/{repo}/releases")

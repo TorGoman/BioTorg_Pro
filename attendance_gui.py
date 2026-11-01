@@ -6,6 +6,19 @@ CustomTkinter Desktop Application
 
 import os
 import sys
+
+# ضمان شمول مجلد التشغيل ومجلد الـ EXE ومجلد _internal داخل sys.path للعمل في كافة البيئات
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)
+if getattr(sys, 'frozen', False):
+    _exe_dir = os.path.dirname(sys.executable)
+    if _exe_dir not in sys.path:
+        sys.path.insert(0, _exe_dir)
+    _internal_dir = os.path.join(_exe_dir, "_internal")
+    if os.path.exists(_internal_dir) and _internal_dir not in sys.path:
+        sys.path.insert(0, _internal_dir)
+
 import datetime
 import threading
 from typing import Optional, List, Dict, Any
@@ -14,8 +27,17 @@ from tkinter import ttk, filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
 
-from attendance_engine import AttendanceEngine, get_app_dir
-import updater
+try:
+    from attendance_engine import AttendanceEngine, get_app_dir
+except Exception:
+    from attendance_engine import AttendanceEngine
+    def get_app_dir():
+        return os.path.dirname(os.path.abspath(__file__))
+
+try:
+    import updater
+except Exception:
+    updater = None
 
 # ضبط المظهر الافتراضي
 ctk.set_appearance_mode("Dark")
@@ -2837,32 +2859,61 @@ class AttendanceApp(ctk.CTk):
         self.after(1200, self.init_auto_updater)
 
     def init_auto_updater(self):
-        """التحقق التلقائي الهادئ من تحديثات GitHub وعرض مميزات التحديث الجديد"""
+        """التحقق التلقائي الهادئ من تحديثات GitHub وتطبيق التحديث بدون مقاطعة ثم عرض المميزات"""
+        if not updater:
+            return
         try:
             # 1. إظهار نافذة 'ما الجديد' إذا تم تثبيت تحديث مؤخراً
             updater.check_and_show_whats_new(self)
 
-            # 2. فحص خلفي صامت لتوفر تحديث جديد
+            # 2. فحص خلفي صامت لتوفر تحديث جديد وبدء التحديث التلقائي الفوري بدون طلب إذن
             def _on_check(has_update, remote_info):
                 if has_update and remote_info:
-                    current_info = updater.get_local_version_info()
-                    cur_v = current_info.get("version", "2.2.0")
-                    self.after(0, lambda: updater.UpdateDialog(self, cur_v, remote_info))
+                    self.after(0, lambda: self.start_silent_auto_update(remote_info))
 
             updater.check_for_updates_background(_on_check)
         except Exception as e:
             print("Auto-updater check error:", e)
 
+    def start_silent_auto_update(self, remote_info: Dict[str, Any]):
+        """تنزيل التحديث وتطبيقه في الخلفية تلقائياً بدون إذن، ثم إعادة التشغيل وإظهار نافذة ما الجديد"""
+        if not updater:
+            return
+        new_v = remote_info.get("version", "")
+        if hasattr(self, "btn_check_update"):
+            self.btn_check_update.configure(
+                text=f"تنزيل التحديث v{new_v}... ⏳",
+                fg_color="#D97706",
+                state="disabled"
+            )
+
+        def _on_progress(msg):
+            if hasattr(self, "btn_check_update"):
+                self.after(0, lambda: self.btn_check_update.configure(text=f"تحديث v{new_v}... ⏳"))
+
+        def _on_finish(success, error=None):
+            if not success and hasattr(self, "btn_check_update"):
+                self.after(0, lambda: self.btn_check_update.configure(text="التحديثات 🔄", fg_color=("#E2E8F0", "#241808"), state="normal"))
+
+        updater.download_and_install_update(
+            remote_info,
+            progress_callback=_on_progress,
+            finish_callback=_on_finish
+        )
+
     def manual_check_updates(self):
         """فحص يدوي للتحديثات عند النقر على الزر في الشريط العلوي"""
+        if not updater:
+            messagebox.showinfo("التحديثات", "موديول التحديثات غير متاح.")
+            return
         self.btn_check_update.configure(state="disabled", text="جاري الفحص... ⏳")
         def _on_manual_check(has_update, remote_info):
             def _ui_action():
                 self.btn_check_update.configure(state="normal", text="التحديثات 🔄")
                 current_info = updater.get_local_version_info()
-                cur_v = current_info.get("version", "2.2.0")
+                cur_v = current_info.get("version", "2.3.0")
                 if has_update and remote_info:
-                    updater.UpdateDialog(self, cur_v, remote_info)
+                    self.start_silent_auto_update(remote_info)
                 else:
                     messagebox.showinfo(
                         "التحديثات",

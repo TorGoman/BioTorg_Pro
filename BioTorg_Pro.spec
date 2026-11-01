@@ -8,6 +8,8 @@ block_cipher = None
 datas = [
     ('attendance_config.json', '.'),
     ('version.json', '.'),
+    ('updater.py', '.'),
+    ('attendance_engine.py', '.'),
 ]
 if os.path.exists('app_icon.ico'):
     datas.append(('app_icon.ico', '.'))
@@ -21,6 +23,8 @@ if os.path.exists('GLG_001.TXT'):
 datas += collect_data_files('customtkinter')
 
 hiddenimports = [
+    'updater',
+    'attendance_engine',
     'customtkinter',
     'openpyxl',
     'pandas',

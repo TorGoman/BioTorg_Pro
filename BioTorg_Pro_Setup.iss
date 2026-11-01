@@ -35,6 +35,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "updater.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "attendance_engine.py"; DestDir: "{app}"; Flags: ignoreversion
 ; الملفات الأساسية والمكتبات البرمجية
 Source: "dist\BioTorg_Pro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "attendance_config.json,attendance_adjustments.json"
 ; ملفات الإعدادات والبيانات لا يتم استبدالها في حال كانت موجودة مسبقاً لحماية بيانات المستخدم
