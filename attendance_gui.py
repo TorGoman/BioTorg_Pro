@@ -39,16 +39,16 @@ try:
 except Exception:
     updater = None
 
-# ضبط المظهر الافتراضي
-ctk.set_appearance_mode("Dark")
+# ضبط المظهر الافتراضي على الوضع النهاري الفاتح (Light Mode)
+ctk.set_appearance_mode("Light")
 ctk.set_default_color_theme("blue")
 
 class AttendanceApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # فرض فتح البرنامج على وضع النايت مود (Dark / Amber Night Mode) دائماً
-        ctk.set_appearance_mode("Dark")
+        # فتح البرنامج افتراضياً على الوضع النهاري الفاتح ذو الخلفية البيضاء الأنيقة
+        ctk.set_appearance_mode("Light")
 
         # إعدادات النافذة الرئيسية مع دعم العمل على أي شاشة ومقاس
         self.title("BioTorg Pro - نظام الحضور والانصراف ومسير الرواتب الذكي")
@@ -127,7 +127,7 @@ class AttendanceApp(ctk.CTk):
 
         app_title = ctk.CTkLabel(
             title_box,
-            text="BioTorg Pro v2.3.3",
+            text="BioTorg Pro v2.3.4",
             font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
             text_color="#F59E0B"
         )
@@ -135,7 +135,7 @@ class AttendanceApp(ctk.CTk):
 
         app_subtitle = ctk.CTkLabel(
             title_box,
-            text="نظام الحضور والانصراف ومسير الرواتب الذكي (تحديث تلقائي ذكي في الخلفية ⚡)",
+            text="نظام الحضور والانصراف ومسير الرواتب الذكي (الوضع الفاتح الأنيق ☀️)",
             font=ctk.CTkFont(family="Segoe UI", size=10),
             text_color=("#64748B", "#D1A562")
         )

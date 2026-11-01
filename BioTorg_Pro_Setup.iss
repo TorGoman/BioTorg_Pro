@@ -1,6 +1,6 @@
 ; Script generated for BioTorg Pro by Ahmed TorGoman
 #define MyAppName "BioTorg Pro"
-#define MyAppVersion "2.3.3"
+#define MyAppVersion "2.3.4"
 #define MyAppPublisher "Ahmed TorGoman"
 #define MyAppContact "@torgoman0"
 #define MyAppExeName "BioTorg_Pro.exe"
