@@ -4,10 +4,10 @@
 
 ![BioTorg Pro Banner](assets/screenshots/01_daily_attendance.png)
 
-# 🌟 BioTorg Pro (الإصدار v2.3.0)
+# 🌟 BioTorg Pro (الإصدار v2.3.5)
 ### الحل البرمجي المتكامل ومفتوح المصدر للشركات والمؤسسات لإدارة بصمات الموظفين ومسير الرواتب
 
-[![تحميل مثبت البرنامج الرسمي](https://img.shields.io/badge/Download_Windows_Installer-BioTorg__Pro__Setup__v2.3.0.exe-F59E0B?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/TorGoman/BioTorg_Pro/raw/main/BioTorg_Pro_Setup_v2.3.0.exe)
+[![تحميل مثبت البرنامج الرسمي](https://img.shields.io/badge/Download_Windows_Installer-BioTorg__Pro__Setup__v2.3.5.exe-F59E0B?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/TorGoman/BioTorg_Pro/raw/main/BioTorg_Pro_Setup_v2.3.5.exe)
 [![Open Source](https://img.shields.io/badge/License-MIT-success?style=for-the-badge)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
 [![نظام التشغيل](https://img.shields.io/badge/OS-Windows_10_|_11-0078D6?style=for-the-badge&logo=windows)](https://github.com/TorGoman/BioTorg_Pro)
@@ -25,7 +25,7 @@
 
 ### 1️⃣ الخيار الأول: التثبيت المباشر بنقرة واحدة (للمستخدمين والشركات)
 البرنامج متاح كملف تثبيت احترافي قياسي لويندوز (Installer)، جاهز للعمل مباشرة دون الحاجة لأي معرفة برمجية أو تثبيت لبايثون:
-1. حمّل ملف التثبيت المباشر: **[BioTorg_Pro_Setup_v2.3.0.exe (اضغط هنا للتحميل المباشر)](https://github.com/TorGoman/BioTorg_Pro/raw/main/BioTorg_Pro_Setup_v2.3.0.exe)**.
+1. حمّل ملف التثبيت المباشر: **[BioTorg_Pro_Setup_v2.3.5.exe (اضغط هنا للتحميل المباشر)](https://github.com/TorGoman/BioTorg_Pro/raw/main/BioTorg_Pro_Setup_v2.3.5.exe)**.
 2. شغّل المثبت، واتبع خطوات معالج التثبيت العربي البسيط.
 3. سيتم إنشاء اختصار رسمي بأيقونة درع البصمة الحيوية على سطح المكتب وقائمة Start ليعمل البرنامج فوراً.
 
@@ -115,7 +115,7 @@ BioTorg_Pro/
 ├── requirements.txt         # المكتبات البرمجية المطلوبة
 ├── LICENSE                  # رخصة MIT مفتوحة المصدر
 ├── version.json             # بيانات الإصدار وسجل التغييرات
-├── BioTorg_Pro_Setup_v2.3.0.exe # مثبت الويندوز الجاهز للتحميل المباشر
+├── BioTorg_Pro_Setup_v2.3.5.exe # مثبت الويندوز الجاهز للتحميل المباشر
 └── assets/                  # الأيقونات، لقطات الشاشة، وكود الدعم
 ```
 

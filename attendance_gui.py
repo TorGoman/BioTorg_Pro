@@ -2868,6 +2868,12 @@ class AttendanceApp(ctk.CTk):
         if not updater:
             return
         try:
+            # 0. تسجيل/تحديث مهمة الفحص الدوري الصامت في ويندوز
+            try:
+                updater.register_windows_scheduled_task()
+            except Exception:
+                pass
+
             # 1. إظهار نافذة 'ما الجديد' إذا تم تثبيت تحديث مؤخراً
             updater.check_and_show_whats_new(self)
 
@@ -4010,5 +4016,15 @@ class AttendanceApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    # إذا تم الاستدعاء عبر مهمة مجدولة أو في الخلفية لفحص التحديثات بصمت تام بدون تشغيل الواجهة
+    bg_flags = ("--background-check", "--silent-check", "--headless-update", "--check-updates")
+    if any(flag in sys.argv for flag in bg_flags):
+        try:
+            if updater:
+                updater.run_background_updater_headless()
+        except Exception:
+            pass
+        sys.exit(0)
+
     app = AttendanceApp()
     app.mainloop()

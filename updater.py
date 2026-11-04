@@ -39,8 +39,8 @@ def get_local_version_info() -> Dict[str, Any]:
         except Exception:
             pass
     return {
-        "version": "2.3.0",
-        "release_date": "2026-11-01",
+        "version": "2.3.5",
+        "release_date": "2026-11-04",
         "repo_owner": DEFAULT_REPO_OWNER,
         "repo_name": DEFAULT_REPO_NAME,
         "changelog": []
@@ -55,7 +55,7 @@ def get_updater_state() -> Dict[str, Any]:
                 return json.load(f)
         except Exception:
             pass
-    return {"last_seen_version": "2.3.0", "pending_changelog": False}
+    return {"last_seen_version": "2.3.5", "pending_changelog": False}
 
 
 def save_updater_state(state: Dict[str, Any]) -> None:
@@ -536,5 +536,190 @@ def check_and_show_whats_new(parent_window):
 
 
         WhatsNewDialog(parent_window, version, changelog)
+
+
+def register_windows_scheduled_task():
+    """تسجيل مهمة مجدولة في ويندوز لفحص التحديثات دورياً في الخلفية بدون فتح الواجهة"""
+    if os.name != 'nt':
+        return
+    try:
+        app_exe = sys.executable
+        if getattr(sys, 'frozen', False):
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            # مهمة مجدولة في ويندوز تعمل بهدوء كل 4 ساعات
+            cmd_task = [
+                "schtasks", "/create",
+                "/tn", "BioTorgPro_BackgroundUpdater",
+                "/tr", f'"{app_exe}" --background-check',
+                "/sc", "HOURLY",
+                "/mo", "4",
+                "/f",
+                "/rl", "LIMITED"
+            ]
+            subprocess.run(cmd_task, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
+
+            # تنظيف أي مفتاح Startup قديم في الريجستري لمنع أي تعارض أو رصد كاذب
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+                try:
+                    winreg.DeleteValue(key, "BioTorgPro_BackgroundUpdater")
+                except FileNotFoundError:
+                    pass
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+    except Exception as e:
+        print("Error registering background updater task:", e)
+
+
+def run_background_updater_headless():
+    """فحص التحديثات وتنزيلها وتثبيتها في صمت وهدوء تام في الخلفية بدون فتح أي نافذة للبرنامج"""
+    import time
+    try:
+        local_info = get_local_version_info()
+        local_v = local_info.get("version", "2.3.5")
+        owner = local_info.get("repo_owner", DEFAULT_REPO_OWNER)
+        repo = local_info.get("repo_name", DEFAULT_REPO_NAME)
+        ts = int(time.time())
+
+        candidate_urls = [
+            f"https://raw.githubusercontent.com/{owner}/{repo}/main/version.json?_t={ts}",
+            f"https://github.com/{owner}/{repo}/raw/main/version.json?_t={ts}"
+        ]
+
+        remote_info = None
+        for url in candidate_urls:
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "BioTorgPro-BgUpdater", "Cache-Control": "no-cache", "Pragma": "no-cache"}
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    if resp.status == 200:
+                        data = resp.read().decode("utf-8")
+                        remote_info = json.loads(data)
+                        break
+            except Exception:
+                continue
+
+        if not remote_info:
+            return False
+
+        remote_v = remote_info.get("version", "")
+        if not is_newer_version(remote_v, local_v):
+            return False
+
+        # يوجد إصدار جديد متاح!
+        is_frozen = getattr(sys, 'frozen', False)
+        os.makedirs(TEMP_UPDATE_DIR, exist_ok=True)
+
+        if is_frozen:
+            candidate_download_urls = []
+            inst_url = remote_info.get("installer_url")
+            if inst_url:
+                candidate_download_urls.append(inst_url)
+            raw_url = f"https://github.com/{owner}/{repo}/raw/main/BioTorg_Pro_Setup_v{remote_v}.exe"
+            if raw_url not in candidate_download_urls:
+                candidate_download_urls.append(raw_url)
+            rel_url = f"https://github.com/{owner}/{repo}/releases/download/v{remote_v}/BioTorg_Pro_Setup_v{remote_v}.exe"
+            if rel_url not in candidate_download_urls:
+                candidate_download_urls.append(rel_url)
+
+            inst_dest = os.path.join(TEMP_UPDATE_DIR, f"BioTorg_Pro_Setup_v{remote_v}.exe")
+            downloaded = False
+            for target_url in candidate_download_urls:
+                try:
+                    req = urllib.request.Request(target_url, headers={"User-Agent": "BioTorgPro-BgUpdater"})
+                    with urllib.request.urlopen(req, timeout=180) as resp, open(inst_dest, "wb") as f_out:
+                        shutil.copyfileobj(resp, f_out)
+                    if os.path.exists(inst_dest) and os.path.getsize(inst_dest) > 1000000:
+                        downloaded = True
+                        break
+                except Exception:
+                    continue
+
+            if not downloaded:
+                return False
+
+            state = {
+                "last_seen_version": remote_v,
+                "pending_changelog": True,
+                "changelog": remote_info.get("changelog", [])
+            }
+            save_updater_state(state)
+
+            # التحقق هل واجهة البرنامج مفتوحة حالياً؟
+            is_gui_running = False
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            try:
+                out = subprocess.check_output(
+                    ["tasklist", "/FI", "IMAGENAME eq BioTorg_Pro.exe", "/FO", "CSV", "/NH"],
+                    creationflags=creationflags
+                ).decode("utf-8", errors="ignore")
+                lines = [line for line in out.strip().split("\n") if "BioTorg_Pro.exe" in line]
+                # لو هناك أكثر من عملية واحدة تعمل، فالواجهة مفتوحة في نفس الوقت
+                if len(lines) > 1:
+                    is_gui_running = True
+            except Exception:
+                pass
+
+            if not is_gui_running:
+                # تثبيت التحديث بصمت كامل دون أي نوافذ
+                subprocess.Popen(
+                    [inst_dest, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                    creationflags=creationflags
+                )
+            return True
+
+        else:
+            # وضع كود بايثون المصدري
+            zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/main.zip"
+            zip_dest = os.path.join(TEMP_UPDATE_DIR, "update.zip")
+            req = urllib.request.Request(zip_url, headers={"User-Agent": "BioTorgPro-BgUpdater"})
+            with urllib.request.urlopen(req, timeout=40) as resp, open(zip_dest, "wb") as f_out:
+                shutil.copyfileobj(resp, f_out)
+
+            extract_dest = os.path.join(TEMP_UPDATE_DIR, "extracted")
+            with zipfile.ZipFile(zip_dest, "r") as zf:
+                zf.extractall(extract_dest)
+
+            subfolders = [os.path.join(extract_dest, d) for d in os.listdir(extract_dest) if os.path.isdir(os.path.join(extract_dest, d))]
+            source_dir = subfolders[0] if subfolders else extract_dest
+
+            PROTECTED_FILES = {
+                "attendance_config.json",
+                "attendance_adjustments.json",
+                "updater_state.json",
+                ".git"
+            }
+
+            for item in os.listdir(source_dir):
+                if item in PROTECTED_FILES:
+                    continue
+                if item.endswith(".TXT") or item.endswith(".xlsx") or item.endswith(".csv"):
+                    continue
+                src_path = os.path.join(source_dir, item)
+                dst_path = os.path.join(BASE_DIR, item)
+                if os.path.isdir(src_path):
+                    if os.path.exists(dst_path):
+                        shutil.rmtree(dst_path, ignore_errors=True)
+                    shutil.copytree(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
+
+            state = {
+                "last_seen_version": remote_v,
+                "pending_changelog": True,
+                "changelog": remote_info.get("changelog", [])
+            }
+            save_updater_state(state)
+            shutil.rmtree(TEMP_UPDATE_DIR, ignore_errors=True)
+            return True
+
+    except Exception as e:
+        print("Background updater headless error:", e)
+        return False
+
 
 

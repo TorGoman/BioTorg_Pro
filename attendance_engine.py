@@ -738,12 +738,30 @@ class AttendanceEngine:
         ws.title = f"حضور {target_date.strftime('%Y-%m-%d')}"
         ws.views.sheetView[0].rightToLeft = True
 
-        # خطوط وألوان
-        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-        title_font = Font(name="Segoe UI", size=15, bold=True, color="1E293B")
-        sub_font = Font(name="Segoe UI", size=10, italic=True, color="64748B")
-        normal_font = Font(name="Segoe UI", size=10)
-        bold_font = Font(name="Segoe UI", size=10, bold=True)
+        # إعدادات الطباعة على ورقة A4 بالعرض (Landscape) جاهز للطباعة مباشرة
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+
+        # هوامش وتوسيط الطباعة
+        ws.page_margins.left = 0.3
+        ws.page_margins.right = 0.3
+        ws.page_margins.top = 0.5
+        ws.page_margins.bottom = 0.5
+        ws.page_margins.header = 0.2
+        ws.page_margins.footer = 0.2
+        ws.print_options.horizontalCentered = True
+        ws.print_options.gridLines = True
+        ws.print_title_rows = '3:3'
+
+        # خطوط وألوان (استخدام خط Arial القياسي المتوافق 100% مع كافة الطابعات لتجنب خطأ PDFFontResourceError)
+        header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        title_font = Font(name="Arial", size=14, bold=True, color="1E293B")
+        sub_font = Font(name="Arial", size=9, italic=True, color="64748B")
+        normal_font = Font(name="Arial", size=10)
+        bold_font = Font(name="Arial", size=10, bold=True)
 
         header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid") # كحلي أزرق
         
@@ -854,10 +872,28 @@ class AttendanceEngine:
         ws.title = "الملخص الدوري"
         ws.views.sheetView[0].rightToLeft = True
 
-        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-        title_font = Font(name="Segoe UI", size=15, bold=True, color="1E293B")
-        sub_font = Font(name="Segoe UI", size=10, italic=True, color="64748B")
-        normal_font = Font(name="Segoe UI", size=10)
+        # إعدادات الطباعة على ورقة A4 بالعرض (Landscape) جاهز للطباعة مباشرة
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+
+        # هوامش وتوسيط الطباعة
+        ws.page_margins.left = 0.3
+        ws.page_margins.right = 0.3
+        ws.page_margins.top = 0.5
+        ws.page_margins.bottom = 0.5
+        ws.page_margins.header = 0.2
+        ws.page_margins.footer = 0.2
+        ws.print_options.horizontalCentered = True
+        ws.print_options.gridLines = True
+        ws.print_title_rows = '3:3'
+
+        header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        title_font = Font(name="Arial", size=14, bold=True, color="1E293B")
+        sub_font = Font(name="Arial", size=9, italic=True, color="64748B")
+        normal_font = Font(name="Arial", size=10)
 
         header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
         thin_border = Border(
@@ -1224,14 +1260,32 @@ class AttendanceEngine:
         ws.title = f"مسير رواتب {start_date.strftime('%Y-%m')}"
         ws.views.sheetView[0].rightToLeft = True
 
-        # أنماط الخطوط
-        title_font = Font(name="Segoe UI", size=16, bold=True, color="1E293B")
-        sub_font = Font(name="Segoe UI", size=10, italic=True, color="64748B")
-        section_font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-        header_font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-        normal_font = Font(name="Segoe UI", size=10)
-        bold_font = Font(name="Segoe UI", size=10, bold=True)
-        total_font = Font(name="Segoe UI", size=11, bold=True, color="1E3A8A")
+        # إعدادات الطباعة على ورقة A4 بالعرض (Landscape) جاهز للطباعة مباشرة
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+
+        # هوامش وتوسيط الطباعة وتكرار ترويسة الجدول في كل صفحة
+        ws.page_margins.left = 0.3
+        ws.page_margins.right = 0.3
+        ws.page_margins.top = 0.5
+        ws.page_margins.bottom = 0.5
+        ws.page_margins.header = 0.2
+        ws.page_margins.footer = 0.2
+        ws.print_options.horizontalCentered = True
+        ws.print_options.gridLines = True
+        ws.print_title_rows = '4:5'
+
+        # أنماط الخطوط (استخدام خط Arial القياسي المتوافق 100% مع كافة الطابعات لتجنب خطأ PDFFontResourceError)
+        title_font = Font(name="Arial", size=14, bold=True, color="1E293B")
+        sub_font = Font(name="Arial", size=9, italic=True, color="64748B")
+        section_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        header_font = Font(name="Arial", size=9, bold=True, color="FFFFFF")
+        normal_font = Font(name="Arial", size=9)
+        bold_font = Font(name="Arial", size=9, bold=True)
+        total_font = Font(name="Arial", size=10, bold=True, color="1E3A8A")
 
         # تعبئة الألوان للمجموعات
         emp_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")     # كحلي
@@ -1258,8 +1312,8 @@ class AttendanceEngine:
         right_align = Alignment(horizontal='right', vertical='center')
         left_align = Alignment(horizontal='left', vertical='center')
 
-        # 1. العنوان الرئيسي
-        ws.merge_cells("A1:P1")
+        # 1. العنوان الرئيسي (يمتد ليشمل كافة الأعمدة الـ 17 من A إلى Q)
+        ws.merge_cells("A1:Q1")
         ws["A1"] = f"كشف مسير الرواتب والاستحقاقات الشهرية - للفترة من {start_date.strftime('%Y/%m/%d')} إلى {end_date.strftime('%Y/%m/%d')}"
         ws["A1"].font = title_font
         ws["A1"].alignment = center_align
@@ -1270,7 +1324,7 @@ class AttendanceEngine:
         tot_ded = sum(r["total_deductions"] for r in data)
         tot_net = sum(r["net_salary"] for r in data)
 
-        ws.merge_cells("A2:P2")
+        ws.merge_cells("A2:Q2")
         ws["A2"] = (f"إجمالي الرواتب الأساسية: {tot_basic:,.2f} ج.م | "
                     f"إجمالي البدلات والإضافي: {tot_add:,.2f} ج.م | "
                     f"إجمالي الاستقطاعات والجزاءات: {tot_ded:,.2f} ج.م | "
@@ -1565,14 +1619,32 @@ class AttendanceEngine:
         ws.title = f"كارت موظف {enno}"
         ws.views.sheetView[0].rightToLeft = True
 
-        title_font = Font(name="Segoe UI", size=16, bold=True, color="1E293B")
-        sub_font = Font(name="Segoe UI", size=11, bold=True, color="475569")
-        kpi_num_font = Font(name="Segoe UI", size=14, bold=True, color="1E3A8A")
-        kpi_lbl_font = Font(name="Segoe UI", size=9, bold=True, color="64748B")
-        header_font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
-        normal_font = Font(name="Segoe UI", size=10)
-        bold_font = Font(name="Segoe UI", size=10, bold=True)
-        total_font = Font(name="Segoe UI", size=11, bold=True, color="1E3A8A")
+        # إعدادات الطباعة على ورقة A4 بالعرض (Landscape) جاهز للطباعة مباشرة
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+
+        # هوامش وتوسيط الطباعة وتكرار ترويسة جدول الأيام
+        ws.page_margins.left = 0.4
+        ws.page_margins.right = 0.4
+        ws.page_margins.top = 0.5
+        ws.page_margins.bottom = 0.5
+        ws.page_margins.header = 0.2
+        ws.page_margins.footer = 0.2
+        ws.print_options.horizontalCentered = True
+        ws.print_options.gridLines = True
+        ws.print_title_rows = '7:7'
+
+        title_font = Font(name="Arial", size=14, bold=True, color="1E293B")
+        sub_font = Font(name="Arial", size=10, bold=True, color="475569")
+        kpi_num_font = Font(name="Arial", size=13, bold=True, color="1E3A8A")
+        kpi_lbl_font = Font(name="Arial", size=9, bold=True, color="64748B")
+        header_font = Font(name="Arial", size=9, bold=True, color="FFFFFF")
+        normal_font = Font(name="Arial", size=9)
+        bold_font = Font(name="Arial", size=9, bold=True)
+        total_font = Font(name="Arial", size=10, bold=True, color="1E3A8A")
 
         header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
         card_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")

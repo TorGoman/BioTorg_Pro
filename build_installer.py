@@ -97,9 +97,15 @@ def main():
         compile_cmd = [iscc_path, ISS_FILE]
         ret_iscc = subprocess.call(compile_cmd)
         if ret_iscc == 0:
+            import glob
+            installers = glob.glob(os.path.join(INSTALLER_DIR, "BioTorg_Pro_Setup_v*.exe"))
+            if installers:
+                latest = max(installers, key=os.path.getmtime)
+                dest = os.path.join(BASE_DIR, os.path.basename(latest))
+                shutil.copy2(latest, dest)
+                print(f"📦 تم تجهيز مثبت البرنامج المعتمد في مجلد المشروع: {os.path.basename(dest)}")
             print("\n" + "=" * 60)
-            print("🎉 تم الانتهاء بنجاح! ملف التثبيت الجاهز:")
-            print("📦 مثبت البرنامج الرسمي: dist_installer\\BioTorg_Pro_Setup_v2.2.1.exe")
+            print("🎉 تم الانتهاء بنجاح وبناء مثبت البرنامج الجديد بنجاح!")
             print("=" * 60)
             return
 

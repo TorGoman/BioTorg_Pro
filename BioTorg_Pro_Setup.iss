@@ -1,6 +1,6 @@
 ; Script generated for BioTorg Pro by Ahmed TorGoman
 #define MyAppName "BioTorg Pro"
-#define MyAppVersion "2.3.4"
+#define MyAppVersion "2.3.5"
 #define MyAppPublisher "Ahmed TorGoman"
 #define MyAppContact "@torgoman0"
 #define MyAppExeName "BioTorg_Pro.exe"
@@ -49,4 +49,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "schtasks.exe"; Parameters: "/delete /tn ""BioTorgPro_BackgroundUpdater"" /f"; Flags: runhidden
 
